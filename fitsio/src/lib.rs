@@ -167,7 +167,7 @@ HDU information belongs to the [`FitsHdu`][fits-hdu] object. HDUs can be fetched
 object contains information about the current HDU:
 
 ```rust
-# use fitsio::{sys, FitsFile};
+# use fitsio::FitsFile;
 #
 # fn try_main() -> Result<(), Box<std::error::Error>> {
 # let filename = "../testdata/full_example.fits";
@@ -892,17 +892,33 @@ let newhdu = hdu.delete_column(&mut fptr, 0)?;
 # fn main() { try_main().unwrap(); }
 ```
 
+# Backends
+
+By default `fitsio` calls the C [`cfitsio`][cfitsio] library through
+[`fitsio-sys`][fitsio-sys]. Alternatively, the `rsfitsio` feature uses
+[`rsfitsio`][rsfitsio], a pure Rust port of CFITSIO, so that no C library is needed:
+
+```toml
+[dependencies]
+fitsio = { version = "*", default-features = false, features = ["rsfitsio"] }
+```
+
+The two backends are mutually exclusive. With `rsfitsio`, `fitsio` calls the safe Rust API of
+`rsfitsio` directly rather than its C ABI, so no `unsafe` code is involved in reading or writing
+files. The `fitsio-src`, `src-cmake` and `bindgen` features only apply to the C backend.
+
 # Raw fits file access
 
 ## Converting a `FitsFile` to a raw `fitsio_sys::fitsfile` pointer
 
 If this library does not support the particular use case that is needed, the raw `fitsfile`
-pointer can be accessed:
+pointer can be accessed (C backend only; with `rsfitsio` use `FitsFile::as_rsfitsio`):
 
 ```rust
-# use fitsio::sys as sys;
+# #[cfg(feature = "cfitsio")]
 use fitsio::FitsFile;
 
+# #[cfg(feature = "cfitsio")]
 # fn try_main() -> Result<(), Box<dyn std::error::Error>> {
 # let filename = "../testdata/full_example.fits";
 let mut fptr = FitsFile::open(filename)?;
@@ -916,12 +932,15 @@ unsafe {
 
     /* Use the unsafe fitsio-sys low level library to call a function that is possibly not
     implemented in this crate */
-    fitsio_sys::ffthdu(fitsfile, &mut num_hdus, &mut status);
+    fitsio::sys::ffthdu(fitsfile, &mut num_hdus, &mut status);
 }
 assert_eq!(num_hdus, 2);
 # Ok(())
 # }
-# fn main() { try_main().unwrap(); }
+# fn main() {
+#     #[cfg(feature = "cfitsio")]
+#     try_main().unwrap();
+# }
 ```
 
 This (unsafe) pointer can then be used with the underlying [`fitsio-sys`][fitsio-sys] library directly.
@@ -934,12 +953,15 @@ constructor is _unsafe_ => it is up to the caller to guarantee that the pointer 
 1. created by `cfitsio` (or [`fitsio_sys`]), and
 2. it represents a valid FITS file.
 
-Given these two things, a [`FitsFile`] can be created.
+Given these two things, a [`FitsFile`] can be created (C backend only; with `rsfitsio` use the
+safe `FitsFile::from_rsfitsio`).
 
 ```rust
+# #[cfg(feature = "cfitsio")]
 use fitsio::{sys::ffopen, FileOpenMode, FitsFile};
 
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
+# #[cfg(feature = "cfitsio")]
+# fn try_main() -> Result<(), Box<dyn std::error::Error>> {
 let filename = "../testdata/full_example.fits";
 let mut fptr = std::ptr::null_mut();
 let mut status = 0;
@@ -957,6 +979,10 @@ assert_eq!(status, 0);
 
 let mut f = unsafe { FitsFile::from_raw(fptr, FileOpenMode::READONLY) }.unwrap();
 # Ok(())
+# }
+# fn main() {
+#     #[cfg(feature = "cfitsio")]
+#     try_main().unwrap();
 # }
 ```
 
@@ -1007,6 +1033,7 @@ let _hdu = t.hdu(hdu_num).unwrap();
 
 [cfitsio]: http://heasarc.gsfc.nasa.gov/fitsio/fitsio.html
 [fitsio-sys]: https://crates.io/crates/fitsio-sys
+[rsfitsio]: https://crates.io/crates/rsfitsio
 [column-data-description]: tables/struct.ColumnDataDescription.html
 [column-data-type]: tables/enum.ColumnDataType.html
 [column-description]: tables/struct.ColumnDescription.html
@@ -1061,21 +1088,31 @@ let _hdu = t.hdu(hdu_num).unwrap();
 #![cfg_attr(feature = "clippy", plugin(clippy))]
 #![allow(clippy::uninlined_format_args)]
 
+#[cfg(feature = "cfitsio")]
 pub use fitsio_sys as sys;
 
 // re-export version information
+#[cfg(all(feature = "rsfitsio", not(feature = "cfitsio")))]
+pub use crate::version::{cfitsio_version, CfitsioVersion};
+#[cfg(feature = "cfitsio")]
 pub use sys::{cfitsio_version, CfitsioVersion};
+
+/// `rsfitsio`, the pure Rust CFITSIO port used by the `rsfitsio` backend
+#[cfg(all(feature = "rsfitsio", not(feature = "cfitsio")))]
+pub use rsfitsio;
 
 #[macro_use]
 mod macros;
+mod backend;
 mod fitsfile;
-mod longnam;
 #[cfg(feature = "array")]
 mod ndarray_compat;
 mod stringutils;
 #[cfg(test)]
 mod testhelpers;
 mod types;
+#[cfg(all(feature = "rsfitsio", not(feature = "cfitsio")))]
+mod version;
 
 // Public mods
 pub mod hdu;

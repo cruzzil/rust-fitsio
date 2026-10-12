@@ -8,22 +8,23 @@
  * similar architectures).
  */
 
+use crate::backend::{self, c_int, c_long, Handle, FLEN_FILENAME, FLEN_VALUE};
 use crate::errors::{check_status, Error, Result};
 use crate::hdu::{DescribesHdu, FitsHdu, FitsHduIterator, HduInfo};
 use crate::images::{ImageDescription, ImageType};
-use crate::longnam::*;
-use crate::stringutils::{self, buf_to_string, status_to_string};
+use crate::stringutils::{self, status_to_string};
 use crate::tables::{ColumnDataDescription, ConcreteColumnDescription};
 use std::ffi;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::ptr;
 
 /// Main entry point to the FITS file format
+///
+/// Dropping a `FitsFile` closes the file on disk, flushing existing buffers.
 pub struct FitsFile {
     file_path: PathBuf,
     open_mode: FileOpenMode,
-    pub(crate) fptr: ptr::NonNull<fitsfile>,
+    pub(crate) fptr: Handle,
 }
 
 impl FitsFile {
@@ -45,24 +46,16 @@ impl FitsFile {
     ```
     */
     pub fn open<T: AsRef<Path>>(filename: T) -> Result<Self> {
-        let mut fptr = ptr::null_mut();
         let mut status = 0;
         let file_path = filename.as_ref();
         let filename = file_path.to_str().expect("converting filename");
         let c_filename = ffi::CString::new(filename)?;
 
-        unsafe {
-            fits_open_file(
-                &mut fptr as *mut *mut fitsfile,
-                c_filename.as_ptr(),
-                FileOpenMode::READONLY as libc::c_int,
-                &mut status,
-            );
-        }
+        let fptr = Handle::open(&c_filename, FileOpenMode::READONLY as c_int, &mut status);
 
-        check_status(status).map(|_| match ptr::NonNull::new(fptr) {
-            Some(p) => FitsFile {
-                fptr: p,
+        check_status(status).map(|_| match fptr {
+            Some(fptr) => FitsFile {
+                fptr,
                 open_mode: FileOpenMode::READONLY,
                 file_path: file_path.to_path_buf(),
             },
@@ -87,24 +80,16 @@ impl FitsFile {
     ```
     */
     pub fn edit<T: AsRef<Path>>(filename: T) -> Result<Self> {
-        let mut fptr = ptr::null_mut();
         let mut status = 0;
         let file_path = filename.as_ref();
         let filename = file_path.to_str().expect("converting filename");
         let c_filename = ffi::CString::new(filename)?;
 
-        unsafe {
-            fits_open_file(
-                &mut fptr as *mut *mut _,
-                c_filename.as_ptr(),
-                FileOpenMode::READWRITE as libc::c_int,
-                &mut status,
-            );
-        }
+        let fptr = Handle::open(&c_filename, FileOpenMode::READWRITE as c_int, &mut status);
 
-        check_status(status).map(|_| match ptr::NonNull::new(fptr) {
-            Some(p) => FitsFile {
-                fptr: p,
+        check_status(status).map(|_| match fptr {
+            Some(fptr) => FitsFile {
+                fptr,
                 open_mode: FileOpenMode::READWRITE,
                 file_path: file_path.to_path_buf(),
             },
@@ -164,9 +149,7 @@ impl FitsFile {
     pub(crate) fn open_mode(&mut self) -> Result<FileOpenMode> {
         let mut status = 0;
         let mut iomode = 0;
-        unsafe {
-            fits_file_mode(self.fptr.as_mut() as *mut _, &mut iomode, &mut status);
-        }
+        backend::fits_file_mode(&mut self.fptr, &mut iomode, &mut status);
 
         check_status(status).map(|_| match iomode {
             0 => FileOpenMode::READONLY,
@@ -177,15 +160,12 @@ impl FitsFile {
 
     fn add_empty_primary(&mut self) -> Result<()> {
         let mut status = 0;
-        unsafe {
-            fits_write_imghdr(
-                self.fptr.as_mut() as *mut _,
-                ImageType::UnsignedByte.into(),
-                0,
-                ptr::null_mut(),
-                &mut status,
-            );
-        }
+        backend::fits_write_imghdr(
+            &mut self.fptr,
+            ImageType::UnsignedByte.into(),
+            &[],
+            &mut status,
+        );
 
         check_status(status)
     }
@@ -204,7 +184,7 @@ impl FitsFile {
     # Example
 
     ```rust
-    # use fitsio::{sys, FitsFile};
+    # use fitsio::FitsFile;
     use fitsio::hdu::HduInfo;
     #
     # fn main() -> Result<(), Box<std::error::Error>> {
@@ -239,7 +219,7 @@ impl FitsFile {
     # Example
 
     ```rust
-    # use fitsio::{sys, FitsFile, hdu::HduInfo};
+    # use fitsio::{FitsFile, hdu::HduInfo};
     #
     # fn main() -> Result<(), Box<std::error::Error>> {
     # let filename = "../testdata/full_example.fits";
@@ -266,7 +246,7 @@ impl FitsFile {
     # Example
 
     ```rust
-    # use fitsio::{sys, FitsFile};
+    # use fitsio::FitsFile;
     # fn main() -> Result<(), Box<dyn std::error::Error>> {
     # let filename = "../testdata/full_example.fits";
     # let mut fptr = FitsFile::open(filename)?;
@@ -279,9 +259,7 @@ impl FitsFile {
     pub fn num_hdus(&mut self) -> Result<usize> {
         let mut status = 0;
         let mut num_hdus = 0;
-        unsafe {
-            fits_get_num_hdus(self.fptr.as_mut() as *mut _, &mut num_hdus, &mut status);
-        }
+        backend::fits_get_num_hdus(&mut self.fptr, &mut num_hdus, &mut status);
 
         check_status(status).map(|_| num_hdus as _)
     }
@@ -303,10 +281,7 @@ impl FitsFile {
     }
 
     pub(crate) fn hdu_number(&mut self) -> usize {
-        let mut hdu_num = 0;
-        unsafe {
-            fits_get_hdu_num(self.fptr.as_mut() as *mut _, &mut hdu_num);
-        }
+        let hdu_num = backend::fits_get_hdu_num(&mut self.fptr);
         (hdu_num - 1) as usize
     }
 
@@ -321,39 +296,26 @@ impl FitsFile {
         let mut status = 0;
         let mut hdu_type = 0;
 
-        unsafe {
-            fits_get_hdu_type(self.fptr.as_mut() as *mut _, &mut hdu_type, &mut status);
-        }
+        backend::fits_get_hdu_type(&mut self.fptr, &mut hdu_type, &mut status);
 
         let hdu_type = match hdu_type {
             0 => {
                 let mut dimensions = 0;
-                unsafe {
-                    fits_get_img_dim(self.fptr.as_mut() as *mut _, &mut dimensions, &mut status);
-                }
+                backend::fits_get_img_dim(&mut self.fptr, &mut dimensions, &mut status);
 
-                let mut shape = vec![0; dimensions as usize];
-                unsafe {
-                    fits_get_img_size(
-                        self.fptr.as_mut() as *mut _,
-                        dimensions,
-                        shape.as_mut_ptr(),
-                        &mut status,
-                    );
-                }
+                let mut shape: Vec<c_long> = vec![0; dimensions as usize];
+                backend::fits_get_img_size(&mut self.fptr, &mut shape, &mut status);
 
                 /* Reverse the image dimensions to be more like the C convention */
                 shape.reverse();
 
                 let mut bitpix = 0;
-                unsafe {
-                    /* Use equiv type as this is more useful
-                     *
-                     * See description here:
-                     * https://heasarc.gsfc.nasa.gov/docs/software/fitsio/c/c_user/node40.html
-                     */
-                    fits_get_img_equivtype(self.fptr.as_mut() as *mut _, &mut bitpix, &mut status);
-                }
+                /* Use equiv type as this is more useful
+                 *
+                 * See description here:
+                 * https://heasarc.gsfc.nasa.gov/docs/software/fitsio/c/c_user/node40.html
+                 */
+                backend::fits_get_img_equivtype(&mut self.fptr, &mut bitpix, &mut status);
 
                 let image_type = match bitpix {
                     8 => ImageType::UnsignedByte,
@@ -375,35 +337,24 @@ impl FitsFile {
             }
             1 | 2 => {
                 let mut num_rows = 0;
-                unsafe {
-                    fits_get_num_rows(self.fptr.as_mut() as *mut _, &mut num_rows, &mut status);
-                }
+                backend::fits_get_num_rows(&mut self.fptr, &mut num_rows, &mut status);
 
                 let mut num_cols = 0;
-                unsafe {
-                    fits_get_num_cols(self.fptr.as_mut() as *mut _, &mut num_cols, &mut status);
-                }
+                backend::fits_get_num_cols(&mut self.fptr, &mut num_cols, &mut status);
                 let mut column_descriptions = Vec::with_capacity(num_cols as usize);
 
                 for i in 0..num_cols {
-                    let mut name_buffer: Vec<libc::c_char> = vec![0; 71];
-                    let mut type_buffer: Vec<libc::c_char> = vec![0; 71];
-                    let mut repeats: libc::c_long = 0;
-                    unsafe {
-                        fits_get_bcolparms(
-                            self.fptr.as_mut() as *mut _,
-                            i + 1,
-                            name_buffer.as_mut_ptr(),
-                            ptr::null_mut(),
-                            type_buffer.as_mut_ptr(),
-                            &mut repeats as *mut libc::c_long,
-                            ptr::null_mut(),
-                            ptr::null_mut(),
-                            ptr::null_mut(),
-                            ptr::null_mut(),
-                            &mut status,
-                        );
-                    }
+                    let mut name_buffer = [0; FLEN_VALUE];
+                    let mut type_buffer = [0; FLEN_VALUE];
+                    let mut repeats: c_long = 0;
+                    backend::fits_get_bcolparms(
+                        &mut self.fptr,
+                        i + 1,
+                        &mut name_buffer,
+                        &mut type_buffer,
+                        &mut repeats,
+                        &mut status,
+                    );
                     let mut col = ConcreteColumnDescription {
                         name: stringutils::buf_to_string(&name_buffer)?,
                         data_type: stringutils::buf_to_string(&type_buffer)?
@@ -463,21 +414,15 @@ impl FitsFile {
     {
         fits_check_readwrite!(self);
 
-        let tfields = {
-            let stringlist: Vec<_> = table_description
-                .iter()
-                .map(|desc| desc.name.clone())
-                .collect();
-            stringutils::StringList::from_slice(stringlist.as_slice())?
-        };
+        let tfields = table_description
+            .iter()
+            .map(|desc| ffi::CString::new(desc.name.clone()))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
-        let ttype = {
-            let stringlist: Vec<_> = table_description
-                .iter()
-                .map(|desc| String::from(desc.clone().data_type))
-                .collect();
-            stringutils::StringList::from_slice(stringlist.as_slice())?
-        };
+        let ttype = table_description
+            .iter()
+            .map(|desc| ffi::CString::new(String::from(desc.clone().data_type)))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         let c_extname = ffi::CString::new(extname.into())?;
 
@@ -486,20 +431,16 @@ impl FitsFile {
             num_rows: 0,
         };
 
-        let mut status: libc::c_int = 0;
-        unsafe {
-            fits_create_tbl(
-                self.fptr.as_mut() as *mut _,
-                hdu_info.into(),
-                0,
-                tfields.len as libc::c_int,
-                tfields.as_ptr(),
-                ttype.as_ptr(),
-                ptr::null_mut(),
-                c_extname.as_ptr(),
-                &mut status,
-            );
-        }
+        let mut status: c_int = 0;
+        backend::fits_create_tbl(
+            &mut self.fptr,
+            hdu_info.into(),
+            0,
+            &tfields,
+            &ttype,
+            Some(&c_extname),
+            &mut status,
+        );
 
         check_status(status).and_then(|_| self.current_hdu())
     }
@@ -541,7 +482,6 @@ impl FitsFile {
     {
         fits_check_readwrite!(self);
 
-        let naxis = image_description.dimensions.len();
         let mut status = 0;
 
         if status != 0 {
@@ -553,22 +493,19 @@ impl FitsFile {
             .into());
         }
 
-        let mut dimensions: Vec<libc::c_long> = image_description
+        let mut dimensions: Vec<c_long> = image_description
             .dimensions
             .iter()
             .map(|d| *d as c_long)
             .collect();
         dimensions.reverse();
 
-        unsafe {
-            fits_create_img(
-                self.fptr.as_mut() as *mut _,
-                image_description.data_type.into(),
-                naxis as i32,
-                dimensions.as_ptr() as *mut libc::c_long,
-                &mut status,
-            );
-        }
+        backend::fits_create_img(
+            &mut self.fptr,
+            image_description.data_type.into(),
+            &dimensions,
+            &mut status,
+        );
 
         if status != 0 {
             return Err(FitsError {
@@ -719,6 +656,7 @@ impl FitsFile {
         Ok(())
     }
 
+    #[cfg(feature = "cfitsio")]
     /// Return a pointer to the underlying C `fitsfile` object representing the current file.
     ///
     /// Any changes to the underlying fits file will not be updated in existing [`FitsHdu`]
@@ -733,7 +671,7 @@ impl FitsFile {
     /// # Example
     ///
     /// ```rust
-    /// use fitsio::{sys, FitsFile};
+    /// use fitsio::FitsFile;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// # let filename = "../testdata/full_example.fits";
@@ -756,10 +694,11 @@ impl FitsFile {
     /// ```
     ///
     /// [`FitsHdu`]: hdu/struct.FitsHdu.html
-    pub unsafe fn as_raw(&mut self) -> *mut fitsfile {
-        self.fptr.as_mut() as *mut _
+    pub unsafe fn as_raw(&mut self) -> *mut crate::sys::fitsfile {
+        self.fptr.as_raw()
     }
 
+    #[cfg(feature = "cfitsio")]
     /// Load a `FitsFile` from a `fitsio_sys::fitsfile` pointer.
     ///
     /// # Safety
@@ -800,34 +739,86 @@ impl FitsFile {
     /// # Ok(())
     /// # }
     /// ```
-    pub unsafe fn from_raw(fptr: *mut fitsfile, mode: FileOpenMode) -> Result<FitsFile> {
-        let mut buf = vec![0; 1025];
+    pub unsafe fn from_raw(
+        fptr: *mut crate::sys::fitsfile,
+        mode: FileOpenMode,
+    ) -> Result<FitsFile> {
+        let fptr = std::ptr::NonNull::new(fptr).ok_or(Error::NullPointer)?;
+        Self::from_handle(Handle::from_raw(fptr), mode)
+    }
+
+    /// Borrow the underlying `rsfitsio` file, to call `rsfitsio` routines this crate does not
+    /// wrap.
+    ///
+    /// Any changes to the underlying fits file will not be updated in existing [`FitsHdu`]
+    /// objects, so these must be recreated.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use fitsio::FitsFile;
+    /// use rsfitsio::aliases::rust_api::fits_get_num_hdus;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let filename = "../testdata/full_example.fits";
+    /// let mut f = FitsFile::open(filename)?;
+    ///
+    /// let mut num_hdus = 0;
+    /// let mut status = 0;
+    /// fits_get_num_hdus(f.as_rsfitsio(), &mut num_hdus, &mut status);
+    /// assert_eq!(num_hdus, 2);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`FitsHdu`]: hdu/struct.FitsHdu.html
+    #[cfg(feature = "rsfitsio")]
+    pub fn as_rsfitsio(&mut self) -> &mut rsfitsio::fitsio::fitsfile {
+        self.fptr.as_rsfitsio()
+    }
+
+    /// Create a `FitsFile` from a file opened through `rsfitsio`, for example one opened from
+    /// memory.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use fitsio::{FileOpenMode, FitsFile};
+    /// use rsfitsio::aliases::rust_api::fits_open_file;
+    /// use rsfitsio::fitsio::READONLY;
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let name = std::ffi::CString::new("../testdata/full_example.fits")?;
+    /// let mut fptr = None;
+    /// let mut status = 0;
+    /// fits_open_file(&mut fptr, bytemuck::cast_slice(name.as_bytes_with_nul()), READONLY, &mut status);
+    /// assert_eq!(status, 0);
+    ///
+    /// let mut f = FitsFile::from_rsfitsio(fptr.unwrap(), FileOpenMode::READONLY)?;
+    /// assert_eq!(f.num_hdus()?, 2);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "rsfitsio")]
+    pub fn from_rsfitsio(
+        fptr: Box<rsfitsio::fitsio::fitsfile>,
+        mode: FileOpenMode,
+    ) -> Result<FitsFile> {
+        Self::from_handle(Handle::from_rsfitsio(fptr), mode)
+    }
+
+    fn from_handle(mut fptr: Handle, mode: FileOpenMode) -> Result<FitsFile> {
+        let mut buf = [0; FLEN_FILENAME];
         let mut status = 0;
-        unsafe { fits_file_name(fptr, buf.as_mut_ptr(), &mut status) };
-        let s = buf_to_string(&buf)?;
+        backend::fits_file_name(&mut fptr, &mut buf, &mut status);
+        check_status(status)?;
+        let s = stringutils::buf_to_string(&buf)?;
 
         Ok(Self {
             file_path: PathBuf::from(s),
             open_mode: mode,
-            fptr: ptr::NonNull::new(fptr).ok_or(Error::NullPointer)?,
+            fptr,
         })
-    }
-}
-
-impl Drop for FitsFile {
-    /**
-    Executes the destructor for this type. [Read
-    more](https://doc.rust-lang.org/nightly/core/ops/drop/trait.Drop.html#tymethod.drop)
-
-    Dropping a [`FitsFile`] closes the file on disk, flushing existing buffers.
-
-    [`FitsFile`]: struct.FitsFile.html
-    */
-    fn drop(&mut self) {
-        let mut status = 0;
-        unsafe {
-            fits_close_file(self.fptr.as_mut() as *mut _, &mut status);
-        }
     }
 }
 
@@ -899,7 +890,6 @@ where
     [new-fits-file]: struct.NewFitsFile.html
     */
     pub fn open(self) -> Result<FitsFile> {
-        let mut fptr = ptr::null_mut();
         let mut status = 0;
         let file_path = self.path.as_ref();
         let path = file_path.to_str().expect("converting filename");
@@ -915,18 +905,12 @@ where
             }
         }
 
-        unsafe {
-            fits_create_file(
-                &mut fptr as *mut *mut fitsfile,
-                c_filename.as_ptr(),
-                &mut status,
-            );
-        }
+        let fptr = Handle::create(&c_filename, &mut status);
 
         check_status(status).and_then(|_| {
-            let mut f = match ptr::NonNull::new(fptr) {
-                Some(p) => FitsFile {
-                    fptr: p,
+            let mut f = match fptr {
+                Some(fptr) => FitsFile {
+                    fptr,
                     open_mode: FileOpenMode::READWRITE,
                     file_path: file_path.to_path_buf(),
                 },
@@ -1074,7 +1058,7 @@ casesensitivity_into_impl!(i64);
 
 #[cfg(test)]
 mod test {
-    use libc::c_int;
+    use std::os::raw::c_int;
 
     use crate::errors::Error;
     use crate::fitsfile::FitsFile;
@@ -1085,7 +1069,6 @@ mod test {
     use crate::testhelpers::{duplicate_test_file, with_temp_file};
     use std::ffi::CString;
     use std::path::Path;
-    use std::ptr;
 
     #[test]
     fn test_opening_an_existing_file() {
@@ -1582,6 +1565,7 @@ mod test {
         });
     }
 
+    #[cfg(feature = "cfitsio")]
     #[test]
     fn test_access_fptr_unsafe() {
         use crate::sys::fitsfile;
@@ -1638,20 +1622,20 @@ mod test {
         });
     }
 
+    #[cfg(feature = "cfitsio")]
     #[test]
     fn test_get_filename() {
-        use crate::longnam::fits_open_file;
-        use fitsio_sys::fitsfile;
+        use crate::sys::{ffopen, fitsfile};
 
         duplicate_test_file(|src_filename| {
             let f = FitsFile::open(src_filename).unwrap();
 
             // open file manually
-            let mut fptr: *mut fitsfile = ptr::null_mut();
+            let mut fptr: *mut fitsfile = std::ptr::null_mut();
             let mut status = 0;
             let c_filename = CString::new(src_filename).unwrap();
             unsafe {
-                fits_open_file(
+                ffopen(
                     &mut fptr as *mut *mut fitsfile,
                     c_filename.as_ptr(),
                     FileOpenMode::READONLY as c_int,
@@ -1669,6 +1653,29 @@ mod test {
 
             assert_eq!(f.file_path(), Path::new(src_filename));
             assert_eq!(f2.file_path(), Path::new(src_filename));
+        });
+    }
+
+    #[cfg(feature = "rsfitsio")]
+    #[test]
+    fn test_get_filename_rsfitsio() {
+        use rsfitsio::aliases::rust_api::fits_open_file;
+
+        duplicate_test_file(|src_filename| {
+            let mut fptr = None;
+            let mut status = 0;
+            let c_filename = CString::new(src_filename).unwrap();
+            fits_open_file(
+                &mut fptr,
+                bytemuck::cast_slice(c_filename.as_bytes_with_nul()),
+                FileOpenMode::READONLY as c_int,
+                &mut status,
+            );
+            assert_eq!(status, 0, "error opening file manually");
+
+            let mut f = FitsFile::from_rsfitsio(fptr.unwrap(), FileOpenMode::READONLY).unwrap();
+            assert_eq!(f.file_path(), Path::new(src_filename));
+            assert_eq!(f.num_hdus().unwrap(), 2);
         });
     }
 }

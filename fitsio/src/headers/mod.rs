@@ -1,10 +1,9 @@
 //! Header-related code
+use crate::backend;
 use crate::errors::{check_status, Result};
 use crate::fitsfile::FitsFile;
-use crate::longnam::*;
-use crate::types::HasFitsDataType;
+use crate::stringutils::buf_to_string;
 use std::ffi;
-use std::ptr;
 
 mod constants;
 mod header_value;
@@ -46,35 +45,18 @@ macro_rules! reads_key_impl {
                 let c_name = ffi::CString::new(name)?;
                 let mut status = 0;
                 let mut value: Self = Default::default();
-                let mut comment: Vec<c_char> = vec![0; MAX_COMMENT_LENGTH];
+                let mut comment = [0; MAX_COMMENT_LENGTH];
 
-                unsafe {
-                    fits_read_key(
-                        f.fptr.as_mut() as *mut _,
-                        <$t as HasFitsDataType>::FITS_DATA_TYPE.into(),
-                        c_name.as_ptr(),
-                        &mut value.value as *mut $t as *mut c_void,
-                        comment.as_mut_ptr(),
-                        &mut status,
-                    );
-                }
+                backend::fits_read_key(
+                    &mut f.fptr,
+                    &c_name,
+                    &mut value.value,
+                    &mut comment,
+                    &mut status,
+                );
 
                 check_status(status).map(|_| {
-                    let comment = {
-                        let comment: Vec<u8> = comment
-                            .iter()
-                            .map(|&x| x as u8)
-                            .filter(|&x| x != 0)
-                            .collect();
-                        if comment.is_empty() {
-                            None
-                        } else {
-                            String::from_utf8(comment).ok()
-                        }
-                    };
-
-                    value.comment = comment;
-
+                    value.comment = buf_to_string(&comment).ok().filter(|c| !c.is_empty());
                     value
                 })
             }
@@ -117,38 +99,15 @@ impl ReadsKey for HeaderValue<String> {
     fn read_key(f: &mut FitsFile, name: &str) -> Result<Self> {
         let c_name = ffi::CString::new(name)?;
         let mut status = 0;
-        let mut value: Vec<c_char> = vec![0; MAX_VALUE_LENGTH];
-        let mut comment: Vec<c_char> = vec![0; MAX_COMMENT_LENGTH];
+        let mut value = [0; MAX_VALUE_LENGTH];
+        let mut comment = [0; MAX_COMMENT_LENGTH];
 
-        unsafe {
-            fits_read_key_str(
-                f.fptr.as_mut() as *mut _,
-                c_name.as_ptr(),
-                value.as_mut_ptr(),
-                comment.as_mut_ptr(),
-                &mut status,
-            );
-        }
+        backend::fits_read_key_str(&mut f.fptr, &c_name, &mut value, &mut comment, &mut status);
 
         check_status(status).and_then(|_| {
-            let value: Vec<u8> = value.iter().map(|&x| x as u8).filter(|&x| x != 0).collect();
-            String::from_utf8(value)
-                .map(|value| {
-                    let comment = {
-                        let comment: Vec<u8> = comment
-                            .iter()
-                            .map(|&x| x as u8)
-                            .filter(|&x| x != 0)
-                            .collect();
-                        if comment.is_empty() {
-                            None
-                        } else {
-                            String::from_utf8(comment).ok()
-                        }
-                    };
-                    HeaderValue { value, comment }
-                })
-                .map_err(From::from)
+            let value = buf_to_string(&value)?;
+            let comment = buf_to_string(&comment).ok().filter(|c| !c.is_empty());
+            Ok(HeaderValue { value, comment })
         })
     }
 }
@@ -166,16 +125,7 @@ macro_rules! writes_key_impl {
                 let c_name = ffi::CString::new(name)?;
                 let mut status = 0;
 
-                unsafe {
-                    fits_write_key(
-                        f.fptr.as_mut() as *mut _,
-                        <$t as HasFitsDataType>::FITS_DATA_TYPE.into(),
-                        c_name.as_ptr(),
-                        &value as *const $t as *mut c_void,
-                        ptr::null_mut(),
-                        &mut status,
-                    );
-                }
+                backend::fits_write_key(&mut f.fptr, &c_name, &value, None, &mut status);
                 check_status(status)
             }
         }
@@ -187,16 +137,13 @@ macro_rules! writes_key_impl {
                 let c_comment = ffi::CString::new(comment)?;
                 let mut status = 0;
 
-                unsafe {
-                    fits_write_key(
-                        f.fptr.as_mut() as *mut _,
-                        <$t as HasFitsDataType>::FITS_DATA_TYPE.into(),
-                        c_name.as_ptr(),
-                        &value as *const $t as *mut c_void,
-                        c_comment.as_ptr(),
-                        &mut status,
-                    );
-                }
+                backend::fits_write_key(
+                    &mut f.fptr,
+                    &c_name,
+                    &value,
+                    Some(&c_comment),
+                    &mut status,
+                );
                 check_status(status)
             }
         }
@@ -234,15 +181,7 @@ impl WritesKey for &'_ str {
         let c_value = ffi::CString::new(value)?;
         let mut status = 0;
 
-        unsafe {
-            fits_write_key_str(
-                f.fptr.as_mut() as *mut _,
-                c_name.as_ptr(),
-                c_value.as_ptr(),
-                ptr::null_mut(),
-                &mut status,
-            );
-        }
+        backend::fits_write_key_str(&mut f.fptr, &c_name, &c_value, None, &mut status);
 
         check_status(status)
     }
@@ -271,15 +210,13 @@ impl<'a> WritesKey for (&'a str, &'a str) {
         let c_comment = ffi::CString::new(comment)?;
         let mut status = 0;
 
-        unsafe {
-            fits_write_key_str(
-                f.fptr.as_mut() as *mut _,
-                c_name.as_ptr(),
-                c_value.as_ptr(),
-                c_comment.as_ptr(),
-                &mut status,
-            );
-        }
+        backend::fits_write_key_str(
+            &mut f.fptr,
+            &c_name,
+            &c_value,
+            Some(&c_comment),
+            &mut status,
+        );
 
         check_status(status)
     }

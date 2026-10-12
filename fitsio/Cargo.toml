@@ -23,9 +23,11 @@ features = ["array"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [dependencies]
-fitsio-sys = { version = "0.5", path = "../fitsio-sys" }
+bytemuck = "1.14"
+fitsio-sys = { version = "0.5", path = "../fitsio-sys", optional = true }
 libc = "0.2.44"
 ndarray = { version = "0.17.1", optional = true }
+rsfitsio = { version = "0.470.5", optional = true }
 
 [dev-dependencies]
 criterion = "0.8.0"
@@ -38,10 +40,16 @@ serde = "1.0.178"
 proc-macro2 = "1.0.80"
 
 [features]
+default = ["cfitsio"]
+# Use the C cfitsio library, through `fitsio-sys`
+cfitsio = ["dep:fitsio-sys"]
+# Use the pure Rust `rsfitsio` port of cfitsio instead of the C library. Mutually exclusive with
+# `cfitsio`, so disable default features to use it.
+rsfitsio = ["dep:rsfitsio"]
 array = ["ndarray"]
-bindgen = ["fitsio-sys/with-bindgen"]
-fitsio-src = ["fitsio-sys/fitsio-src"]
-src-cmake = ["fitsio-sys/src-cmake"]
+bindgen = ["cfitsio", "fitsio-sys?/with-bindgen"]
+fitsio-src = ["cfitsio", "fitsio-sys?/fitsio-src"]
+src-cmake = ["cfitsio", "fitsio-sys?/src-cmake"]
 clippy = []
 
 [[bench]]

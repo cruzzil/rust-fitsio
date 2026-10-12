@@ -60,6 +60,19 @@ and `make`, `ninja` or another CMake-compatible build tool is available:
 cargo build --features fitsio-src,src-cmake
 ```
 
+To avoid C entirely, the `rsfitsio` feature uses [`rsfitsio`](https://crates.io/crates/rsfitsio),
+a pure Rust port of `cfitsio`, instead of the C library. It replaces the default `cfitsio`
+feature, so default features must be disabled:
+
+```toml,no_sync
+[dependencies]
+fitsio = { version = "*", default-features = false, features = ["rsfitsio"] }
+```
+
+With `rsfitsio`, `fitsio` calls the safe Rust API of `rsfitsio` rather than going through a C
+ABI, so the raw `fitsio::sys` bindings and `FitsFile::as_raw`/`from_raw` are not available;
+`FitsFile::as_rsfitsio`/`from_rsfitsio` are their safe equivalents.
+
 For the time being, it's best to stick to the development version from
 github. The code is tested before being pushed and is relatively
 stable. Add this to your `Cargo.toml` file:

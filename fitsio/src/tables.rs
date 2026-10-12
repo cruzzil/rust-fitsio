@@ -1,14 +1,14 @@
 //! Table-related code
+use crate::backend::{self, c_char};
 use crate::errors::{check_status, Error, FitsError, IndexError, Result};
 use crate::fitsfile::FitsFile;
 use crate::hdu::{FitsHdu, HduInfo};
-use crate::longnam::*;
 use crate::stringutils::status_to_string;
 use crate::types::{DataType, HasFitsDataType};
+use bytemuck::{cast_slice, cast_slice_mut};
 use std::ffi;
 use std::mem::size_of;
 use std::ops::Range;
-use std::ptr;
 use std::str::FromStr;
 
 const BOOL_NULL: c_char = 127;
@@ -47,7 +47,7 @@ pub trait ReadsCol {
 }
 
 macro_rules! reads_col_impl {
-    ($t:ty, $func:ident, $nullval:expr) => {
+    ($t:ty, $nullval:expr) => {
         impl ReadsCol for $t {
             fn read_col_range<T: Into<String>>(
                 fits_file: &mut FitsFile,
@@ -79,19 +79,16 @@ macro_rules! reads_col_impl {
                         };
                         let mut out = vec![$nullval; num_output_rows * repeat];
                         let mut status = 0;
-                        unsafe {
-                            $func(
-                                fits_file.fptr.as_mut() as *mut _,
-                                (column_number + 1) as i32,
-                                (range.start + 1) as i64,
-                                1,
-                                (num_output_rows * repeat) as _,
-                                $nullval,
-                                out.as_mut_ptr(),
-                                ptr::null_mut(),
-                                &mut status,
-                            );
-                        }
+                        backend::fits_read_col(
+                            &mut fits_file.fptr,
+                            <$t as HasFitsDataType>::FITS_DATA_TYPE.into(),
+                            (column_number + 1) as i32,
+                            (range.start + 1) as i64,
+                            1,
+                            (num_output_rows * repeat) as i64,
+                            cast_slice_mut(&mut out),
+                            &mut status,
+                        );
 
                         match status {
                             0 => Ok(out),
@@ -139,19 +136,16 @@ macro_rules! reads_col_impl {
                         }
                         let mut status = 0;
 
-                        unsafe {
-                            $func(
-                                fits_file.fptr.as_mut() as *mut _,
-                                (column_number + 1) as i32,
-                                (idx + 1) as i64,
-                                1,
-                                1,
-                                $nullval,
-                                &mut out,
-                                ptr::null_mut(),
-                                &mut status,
-                            );
-                        }
+                        backend::fits_read_col(
+                            &mut fits_file.fptr,
+                            <$t as HasFitsDataType>::FITS_DATA_TYPE.into(),
+                            (column_number + 1) as i32,
+                            (idx + 1) as i64,
+                            1,
+                            1,
+                            bytemuck::bytes_of_mut(&mut out),
+                            &mut status,
+                        );
 
                         check_status(status).map(|_| out)
                     }
@@ -185,19 +179,15 @@ impl ReadsCol for bool {
                         test_name
                     )))?;
                 let mut status = 0;
-                unsafe {
-                    fits_read_col_log(
-                        fits_file.fptr.as_mut() as *mut _,
-                        (column_number + 1) as i32,
-                        (range.start + 1) as i64,
-                        1,
-                        num_output_rows as _,
-                        BOOL_NULL,
-                        out.as_mut_ptr(),
-                        ptr::null_mut(),
-                        &mut status,
-                    );
-                }
+                backend::fits_read_col_log(
+                    &mut fits_file.fptr,
+                    (column_number + 1) as i32,
+                    (range.start + 1) as i64,
+                    1,
+                    BOOL_NULL,
+                    &mut out,
+                    &mut status,
+                );
 
                 match status {
                     // TODO: this does not correctly account for nyll values,
@@ -241,19 +231,15 @@ impl ReadsCol for bool {
                     )))?;
                 let mut status = 0;
 
-                unsafe {
-                    fits_read_col_log(
-                        fits_file.fptr.as_mut() as *mut _,
-                        (column_number + 1) as i32,
-                        (idx + 1) as i64,
-                        1,
-                        1,
-                        BOOL_NULL,
-                        &mut out,
-                        ptr::null_mut(),
-                        &mut status,
-                    );
-                }
+                backend::fits_read_col_log(
+                    &mut fits_file.fptr,
+                    (column_number + 1) as i32,
+                    (idx + 1) as i64,
+                    1,
+                    BOOL_NULL,
+                    std::slice::from_mut(&mut out),
+                    &mut status,
+                );
                 // TODO: this does not correctly account for nyll values,
                 // instead treat them as falsy for now
                 check_status(status).map(|_| out != BOOL_NULL && out > 0)
@@ -264,16 +250,16 @@ impl ReadsCol for bool {
     }
 }
 
-reads_col_impl!(u8, fits_read_col_byt, 0);
-reads_col_impl!(i8, fits_read_col_sbyt, 0);
-reads_col_impl!(i16, fits_read_col_sht, 0);
-reads_col_impl!(u16, fits_read_col_usht, 0);
-reads_col_impl!(i32, fits_read_col_int, 0);
-reads_col_impl!(u32, fits_read_col_uint, 0);
-reads_col_impl!(f32, fits_read_col_flt, 0.0);
-reads_col_impl!(f64, fits_read_col_dbl, 0.0);
-reads_col_impl!(i64, fits_read_col_lnglng, 0);
-reads_col_impl!(u64, fits_read_col_ulnglng, 0);
+reads_col_impl!(u8, 0);
+reads_col_impl!(i8, 0);
+reads_col_impl!(i16, 0);
+reads_col_impl!(u16, 0);
+reads_col_impl!(i32, 0);
+reads_col_impl!(u32, 0);
+reads_col_impl!(f32, 0.0);
+reads_col_impl!(f64, 0.0);
+reads_col_impl!(i64, 0);
+reads_col_impl!(u64, 0);
 
 impl ReadsCol for String {
     fn read_col_range<T: Into<String>>(
@@ -294,32 +280,20 @@ impl ReadsCol for String {
                     .ok_or_else(|| Error::Message(format!("Cannot find column {:?}", test_name)))?;
 
                 /* Set up the storage arrays for the column string values */
-                let mut raw_char_data: Vec<*mut libc::c_char> = Vec::with_capacity(num_output_rows);
-
                 let mut status = 0;
                 let width = column_display_width(fits_file, column_number)?;
 
-                let mut vecs: Vec<Vec<libc::c_char>> = Vec::with_capacity(num_output_rows);
-                for _ in 0..num_output_rows {
-                    let mut data: Vec<libc::c_char> = vec![0; width as _];
-                    let data_p = data.as_mut_ptr();
-                    vecs.push(data);
-                    raw_char_data.push(data_p);
-                }
+                // CFITSIO writes up to `width` characters plus a terminating nul
+                let mut vecs: Vec<Vec<c_char>> = vec![vec![0; width + 1]; num_output_rows];
 
-                unsafe {
-                    fits_read_col_str(
-                        fits_file.fptr.as_mut() as *mut _,
-                        (column_number + 1) as _,
-                        (range.start + 1) as _,
-                        1,
-                        raw_char_data.len() as _,
-                        ptr::null_mut(),
-                        raw_char_data.as_ptr() as *mut *mut _,
-                        ptr::null_mut(),
-                        &mut status,
-                    );
-                }
+                backend::fits_read_col_str(
+                    &mut fits_file.fptr,
+                    (column_number + 1) as _,
+                    (range.start + 1) as _,
+                    1,
+                    &mut vecs,
+                    &mut status,
+                );
 
                 check_status(status)?;
 
@@ -400,18 +374,16 @@ macro_rules! writes_col_impl {
                         // TODO: check that the column exists in the file
                         let mut status = 0;
                         let n_elements = (rows.end - rows.start);
-                        unsafe {
-                            fits_write_col(
-                                fits_file.fptr.as_mut() as *mut _,
-                                <$t as HasFitsDataType>::FITS_DATA_TYPE.into(),
-                                (colno + 1) as _,
-                                (rows.start + 1) as _,
-                                1,
-                                n_elements as _,
-                                col_data.as_ptr() as *mut _,
-                                &mut status,
-                            );
-                        }
+                        backend::fits_write_col(
+                            &mut fits_file.fptr,
+                            <$t as HasFitsDataType>::FITS_DATA_TYPE.into(),
+                            (colno + 1) as _,
+                            (rows.start + 1) as _,
+                            1,
+                            n_elements as _,
+                            cast_slice(col_data),
+                            &mut status,
+                        );
                         check_status(status).and_then(|_| fits_file.current_hdu())
                     }
                     Ok(HduInfo::ImageInfo { .. }) => {
@@ -451,40 +423,21 @@ impl WritesCol for String {
                 let colno = hdu.get_column_no(fits_file, col_name.into())?;
                 let mut status = 0;
 
-                let start = rows.start;
-                let end = rows.end;
-                let n_elements = end - start;
-                let mut ptr_array = Vec::with_capacity(n_elements);
+                let strings = col_data[rows.clone()]
+                    .iter()
+                    .map(|s| ffi::CString::new(s.as_str()))
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
 
-                let rows = rows.clone();
+                backend::fits_write_col_str(
+                    &mut fits_file.fptr,
+                    (colno + 1) as _,
+                    (rows.start + 1) as _,
+                    1,
+                    &strings,
+                    &mut status,
+                );
 
-                // Have to free the memory for these pointers at the end
-                for i in rows {
-                    let s = ffi::CString::new(col_data[i].clone())?;
-                    ptr_array.push(s.into_raw());
-                }
-
-                unsafe {
-                    fits_write_col_str(
-                        fits_file.fptr.as_mut() as *mut _,
-                        (colno + 1) as _,
-                        (start + 1) as _,
-                        1,
-                        n_elements as _,
-                        ptr_array.as_mut_ptr() as _,
-                        &mut status,
-                    );
-                }
-
-                let hdu = check_status(status).and_then(|_| fits_file.current_hdu());
-
-                // Free the memory in ptr_array
-                for ptr in ptr_array {
-                    assert!(!ptr.is_null());
-                    let _ = unsafe { ffi::CString::from_raw(ptr) };
-                }
-
-                hdu
+                check_status(status).and_then(|_| fits_file.current_hdu())
             }
             Ok(HduInfo::ImageInfo { .. }) => Err("Cannot write column data to FITS image".into()),
             Ok(HduInfo::AnyInfo) => {
@@ -510,14 +463,12 @@ pub(crate) fn column_display_width(
 ) -> Result<usize> {
     let mut status = 0;
     let mut width = 0;
-    unsafe {
-        fits_get_col_display_width(
-            fits_file.fptr.as_mut() as *mut _,
-            (column_number + 1) as _,
-            &mut width,
-            &mut status,
-        );
-    }
+    backend::fits_get_col_display_width(
+        &mut fits_file.fptr,
+        (column_number + 1) as _,
+        &mut width,
+        &mut status,
+    );
     check_status(status).map(|_| width as usize)
 }
 

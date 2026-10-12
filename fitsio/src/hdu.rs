@@ -1,11 +1,11 @@
 //! Fits HDU related code
 
+use crate::backend::{self, c_long};
 use crate::errors::{check_status, Result};
 use crate::fitsfile::CaseSensitivity;
 use crate::fitsfile::FitsFile;
 use crate::headers::{ReadsKey, WritesKey};
 use crate::images::{ImageType, ReadImage, WriteImage};
-use crate::longnam::*;
 use crate::tables::{
     ColumnIterator, ConcreteColumnDescription, DescribesColumnLocation, FitsRow, ReadsCol,
     WritesCol,
@@ -393,15 +393,12 @@ impl FitsHdu {
         match self.info {
             HduInfo::ImageInfo { image_type, .. } => {
                 let mut status = 0;
-                unsafe {
-                    fits_resize_img(
-                        fits_file.fptr.as_mut() as *mut _,
-                        image_type.into(),
-                        new_size.len() as _,
-                        new_size.as_ptr() as *mut _,
-                        &mut status,
-                    );
-                }
+                backend::fits_resize_img(
+                    &mut fits_file.fptr,
+                    image_type.into(),
+                    &new_size,
+                    &mut status,
+                );
                 check_status(status).and_then(|_| fits_file.current_hdu())
             }
             HduInfo::TableInfo { .. } => Err("cannot resize binary table".into()),
@@ -436,14 +433,12 @@ impl FitsHdu {
         dest_fits_file: &mut FitsFile,
     ) -> Result<()> {
         let mut status = 0;
-        unsafe {
-            fits_copy_hdu(
-                src_fits_file.fptr.as_mut() as *mut _,
-                dest_fits_file.fptr.as_mut() as *mut _,
-                0,
-                &mut status,
-            );
-        }
+        backend::fits_copy_hdu(
+            &mut src_fits_file.fptr,
+            &mut dest_fits_file.fptr,
+            0,
+            &mut status,
+        );
 
         check_status(status).map(|_| ())
     }
@@ -492,15 +487,13 @@ impl FitsHdu {
         let c_name = ffi::CString::new(description.name.clone())?;
         let c_type = ffi::CString::new(String::from(description.data_type.clone()))?;
 
-        unsafe {
-            fits_insert_col(
-                fits_file.fptr.as_mut() as *mut _,
-                (position + 1) as _,
-                c_name.as_ptr() as *mut _,
-                c_type.as_ptr() as *mut _,
-                &mut status,
-            );
-        }
+        backend::fits_insert_col(
+            &mut fits_file.fptr,
+            (position + 1) as _,
+            &c_name,
+            &c_type,
+            &mut status,
+        );
 
         check_status(status).and_then(|_| fits_file.current_hdu())
     }
@@ -611,13 +604,7 @@ impl FitsHdu {
         let colno = T::get_column_no(&col_identifier, &self, fits_file)?;
         let mut status = 0;
 
-        unsafe {
-            fits_delete_col(
-                fits_file.fptr.as_mut() as *mut _,
-                (colno + 1) as _,
-                &mut status,
-            );
-        }
+        backend::fits_delete_col(&mut fits_file.fptr, (colno + 1) as _, &mut status);
 
         check_status(status).and_then(|_| fits_file.current_hdu())
     }
@@ -642,15 +629,13 @@ impl FitsHdu {
             ffi::CString::new(col_name.as_str())?
         };
 
-        unsafe {
-            fits_get_colnum(
-                fits_file.fptr.as_mut() as *mut _,
-                CaseSensitivity::CASEINSEN as _,
-                c_col_name.as_ptr() as *mut _,
-                &mut colno,
-                &mut status,
-            );
-        }
+        backend::fits_get_colnum(
+            &mut fits_file.fptr,
+            CaseSensitivity::CASEINSEN as _,
+            &c_col_name,
+            &mut colno,
+            &mut status,
+        );
         check_status(status).map(|_| (colno - 1) as usize)
     }
 
@@ -873,9 +858,7 @@ impl FitsHdu {
 
         let mut status = 0;
         let mut curhdu = 0;
-        unsafe {
-            fits_delete_hdu(fits_file.fptr.as_mut() as *mut _, &mut curhdu, &mut status);
-        }
+        backend::fits_delete_hdu(&mut fits_file.fptr, &mut curhdu, &mut status);
         check_status(status).map(|_| ())
     }
 
@@ -987,14 +970,7 @@ impl DescribesHdu for usize {
     fn change_hdu(&self, f: &mut FitsFile) -> Result<()> {
         let mut hdu_type = 0;
         let mut status = 0;
-        unsafe {
-            fits_movabs_hdu(
-                f.fptr.as_mut() as *mut _,
-                (*self + 1) as i32,
-                &mut hdu_type,
-                &mut status,
-            );
-        }
+        backend::fits_movabs_hdu(&mut f.fptr, (*self + 1) as i32, &mut hdu_type, &mut status);
 
         check_status(status)
     }
@@ -1005,15 +981,13 @@ impl DescribesHdu for &'_ str {
         let mut status = 0;
         let c_hdu_name = ffi::CString::new(*self)?;
 
-        unsafe {
-            fits_movnam_hdu(
-                f.fptr.as_mut() as *mut _,
-                HduInfo::AnyInfo.into(),
-                c_hdu_name.as_ptr() as *mut _,
-                0,
-                &mut status,
-            );
-        }
+        backend::fits_movnam_hdu(
+            &mut f.fptr,
+            HduInfo::AnyInfo.into(),
+            &c_hdu_name,
+            0,
+            &mut status,
+        );
 
         check_status(status)
     }
