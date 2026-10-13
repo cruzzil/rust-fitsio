@@ -40,16 +40,6 @@ enum TestType {
     All,
 }
 
-/// Test the `rsfitsio` backend against this branch until a release with its fixes for reading
-/// large images is published.
-// TODO: remove once rsfitsio > 0.470.5 is released
-const RSFITSIO_PATCH: [&str; 4] = [
-    "--config",
-    "patch.crates-io.rsfitsio.git=\"https://github.com/cruzzil/rsfitsio\"",
-    "--config",
-    "patch.crates-io.rsfitsio.branch=\"fix/large-image-read-buffer\"",
-];
-
 struct TestRunner {
     rust_version: String,
     no_fail_fast: bool,
@@ -247,18 +237,15 @@ impl TestRunner {
             "rsfitsio,array",
         ];
         let mut nextest = vec!["nextest", "run"];
-        nextest.extend(RSFITSIO_PATCH);
         nextest.extend(features);
         self.run_cargo(&nextest);
 
         let mut doctest = vec!["test", "--doc"];
-        doctest.extend(RSFITSIO_PATCH);
         doctest.extend(features);
         self.run_cargo(&doctest);
 
         // as the `clippy` test, without the `array` feature
         let mut clippy = vec!["clippy"];
-        clippy.extend(RSFITSIO_PATCH);
         clippy.extend([
             "--manifest-path",
             "fitsio/Cargo.toml",
@@ -276,7 +263,6 @@ impl TestRunner {
         self.run_cargo(&clippy);
 
         let mut example = vec!["run"];
-        example.extend(RSFITSIO_PATCH);
         example.extend(features);
         example.extend(["--example", "full_example"]);
         self.run_cargo(&example);

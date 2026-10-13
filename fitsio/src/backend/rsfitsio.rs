@@ -172,9 +172,7 @@ pub(crate) fn fits_get_bcolparms(
     repeat: &mut c_long,
     status: &mut c_int,
 ) {
-    // TODO: rsfitsio's `dtype` only has room for one character and the nul, so it cannot hold
-    // the `P` prefix of a variable length column.
-    let mut code: [c_char; 2] = [0; 2];
+    let mut code: [c_char; 3] = [0; 3];
     api::fits_get_bcolparms(
         f.as_rsfitsio(),
         colnum,
@@ -188,7 +186,7 @@ pub(crate) fn fits_get_bcolparms(
         None,
         status,
     );
-    dtype[..2].copy_from_slice(&code);
+    dtype[..3].copy_from_slice(&code);
 }
 
 pub(crate) fn fits_create_tbl(

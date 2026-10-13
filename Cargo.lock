@@ -1049,9 +1049,9 @@ checksum = "afc02e68b39ec37f0da1fce1c79011a27edb9ad162d6079b79f0502003c78f2b"
 
 [[package]]
 name = "rsfitsio"
-version = "0.470.5"
+version = "0.470.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05a787987ee109b62910f2bb1c314728334dc42c01048e8e1f70e956e0b1fd96"
+checksum = "53296a1ea27adf3d30846d14fe3e2c230195e8eef517dc3e25b43b6ebebe572f"
 dependencies = [
  "bytemuck",
  "chrono",
