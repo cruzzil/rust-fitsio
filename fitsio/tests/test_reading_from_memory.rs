@@ -1,3 +1,6 @@
+// Uses the C `fitsio-sys` API directly
+#![cfg(feature = "cfitsio")]
+
 use fitsio::{errors::check_status, sys, FileOpenMode, FitsFile};
 use std::io::Read;
 
@@ -25,7 +28,7 @@ fn reading_from_memory() {
             &mut fptr as *mut *mut _,
             c_filename.as_ptr(),
             sys::READONLY as _,
-            &mut ptr as *const _ as *mut *mut libc::c_void,
+            &mut ptr as *const _ as *mut *mut std::ffi::c_void,
             &mut ptr_size as *mut _,
             0,
             None,

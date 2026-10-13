@@ -1,3 +1,6 @@
+// Uses the C `fitsio-sys` API directly
+#![cfg(feature = "cfitsio")]
+
 use fitsio::{sys::ffopen, FileOpenMode, FitsFile};
 use std::ptr;
 

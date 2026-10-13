@@ -1,56 +1,16 @@
+use crate::backend::{self, c_char, c_int, FLEN_STATUS};
 use crate::errors::Result;
-use crate::sys::ffgerr;
-use libc::{c_char, c_int, size_t};
-use std::ffi::{CStr, CString};
 
-/// Helper function converting a C string pointer to Rust String
+/// Helper function converting a nul-terminated C string buffer to a Rust String
+///
+/// Everything from the first nul onwards is ignored; a buffer without a nul is converted whole.
 pub fn buf_to_string(buffer: &[c_char]) -> Result<String> {
-    let c_str = unsafe { CStr::from_ptr(buffer.as_ptr()) };
-    Ok(c_str.to_str()?.to_string())
-}
-
-#[repr(C)]
-pub struct StringList {
-    pub len: size_t,
-    cap: size_t,
-    mem: Vec<*mut c_char>,
-}
-
-impl StringList {
-    pub fn from_slice(stringvec: &[String]) -> Result<Self> {
-        let converted: Vec<*mut c_char> = stringvec
-            .iter()
-            .map(|x| CString::new(x.clone()).unwrap().into_raw())
-            .collect();
-        let listlen = converted.len();
-        let listcap = converted.capacity();
-
-        let stringlist = StringList {
-            len: listlen,
-            cap: listcap,
-            mem: converted,
-        };
-
-        Ok(stringlist)
-    }
-
-    pub fn as_ptr(&self) -> *mut *mut c_char {
-        self.mem.as_slice().as_ptr() as *mut _
-    }
-}
-
-impl Drop for StringList {
-    // TODO: IS THIS SOUND?
-    // Free the memory of this string list
-    fn drop(&mut self) {
-        for ptr in &self.mem {
-            if ptr.is_null() {
-                continue;
-            }
-
-            let _ = unsafe { CString::from_raw(*ptr) };
-        }
-    }
+    let bytes: Vec<u8> = buffer
+        .iter()
+        .take_while(|&&c| c != 0)
+        .map(|&c| c as u8)
+        .collect();
+    Ok(String::from_utf8(bytes)?)
 }
 
 /// Internal function to get the fits error description from a status code
@@ -58,10 +18,8 @@ pub fn status_to_string(status: c_int) -> Result<Option<String>> {
     match status {
         0 => Ok(None),
         status => {
-            let mut buffer: Vec<c_char> = vec![0; 31];
-            unsafe {
-                ffgerr(status, buffer.as_mut_ptr());
-            }
+            let mut buffer = [0; FLEN_STATUS];
+            backend::fits_get_errstatus(status, &mut buffer);
             let result_str = buf_to_string(&buffer)?;
             Ok(Some(result_str))
         }
@@ -70,7 +28,7 @@ pub fn status_to_string(status: c_int) -> Result<Option<String>> {
 
 #[cfg(test)]
 mod test {
-    use super::status_to_string;
+    use super::{buf_to_string, status_to_string};
 
     #[test]
     fn test_returning_error_messages() {
@@ -78,5 +36,12 @@ mod test {
             status_to_string(105).unwrap().unwrap(),
             "couldn't create the named file"
         );
+    }
+
+    #[test]
+    fn test_buf_to_string_stops_at_nul() {
+        let buf = [b'a' as _, b'b' as _, 0, b'c' as _];
+        assert_eq!(buf_to_string(&buf).unwrap(), "ab");
+        assert_eq!(buf_to_string(&buf[..2]).unwrap(), "ab");
     }
 }

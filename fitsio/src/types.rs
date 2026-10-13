@@ -1,6 +1,6 @@
 //! Data types used within `fitsio`
 
-use libc::{
+use std::os::raw::{
     c_double, c_float, c_int, c_long, c_longlong, c_schar, c_short, c_uchar, c_uint, c_ulong,
     c_ulonglong, c_ushort,
 };

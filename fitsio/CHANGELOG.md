@@ -6,6 +6,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `rsfitsio` feature, to use the pure Rust [`rsfitsio`](https://crates.io/crates/rsfitsio) port
+  of cfitsio instead of the C library. `fitsio` calls its safe API directly, so this backend
+  needs no `unsafe` code. It is mutually exclusive with the new default `cfitsio` feature.
+
+### Changed
+
+- `fitsio-sys` is now an optional dependency, enabled by the default `cfitsio` feature. Builds
+  with `default-features = false` must enable `cfitsio` (or `rsfitsio`).
+- All calls into cfitsio go through an internal backend module, so the rest of the crate no
+  longer handles raw pointers.
+
+### Fixed
+
+- Buffers for reading string columns have room for the terminating nul that cfitsio writes.
+- A string column write no longer leaks the already-converted strings when a later one contains
+  a nul byte.
+
 ## [0.21.10](https://github.com/simonrw/rust-fitsio/compare/fitsio-v0.21.9...fitsio-v0.21.10) - 2026-04-20
 
 ### Other
