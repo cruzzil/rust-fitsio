@@ -37,7 +37,8 @@ fn from_raw() {
 }
 
 /// When `from_raw` fails, the caller still owns the pointer, so it must not have been closed
-#[cfg(unix)]
+// Linux accepts the non-UTF-8 file name this needs; macOS (APFS) does not
+#[cfg(target_os = "linux")]
 #[test]
 fn from_raw_error_leaves_pointer_open() {
     use fitsio::sys::{ffclos, ffcrim, ffinit};

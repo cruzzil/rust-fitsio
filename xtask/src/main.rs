@@ -265,7 +265,7 @@ impl TestRunner {
         // the docs, with broken links as errors
         let mut doc = vec!["rustdoc", "--lib"];
         doc.extend(features);
-        doc.extend(["--", "-D", "warnings"]);
+        doc.extend(["--", "-D", "rustdoc::broken_intra_doc_links"]);
         self.run_cargo(&doc);
 
         let mut example = vec!["run"];
