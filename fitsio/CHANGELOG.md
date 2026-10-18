@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rsfitsio` feature, to use the pure Rust [`rsfitsio`](https://crates.io/crates/rsfitsio) port
   of cfitsio instead of the C library. `fitsio` calls its safe API directly, so this backend
   needs no `unsafe` code. It is mutually exclusive with the new default `cfitsio` feature.
+- Windows msvc support with the `rsfitsio` feature, tested in CI.
 
 ### Changed
 
