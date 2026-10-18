@@ -36,6 +36,7 @@ enum TestType {
     FitsioSrcAndCmakeAndBindgen,
     FitsioSrcAndBindgen,
     Bindgen,
+    Rsfitsio,
     All,
 }
 
@@ -227,6 +228,52 @@ impl TestRunner {
         ]);
     }
 
+    fn run_test_rsfitsio(&self) {
+        let features = [
+            "--manifest-path",
+            "fitsio/Cargo.toml",
+            "--no-default-features",
+            "--features",
+            "rsfitsio-experimental,array",
+        ];
+        let mut nextest = vec!["nextest", "run"];
+        nextest.extend(features);
+        self.run_cargo(&nextest);
+
+        let mut doctest = vec!["test", "--doc"];
+        doctest.extend(features);
+        self.run_cargo(&doctest);
+
+        // as the `clippy` test, without the `array` feature
+        let mut clippy = vec!["clippy"];
+        clippy.extend([
+            "--manifest-path",
+            "fitsio/Cargo.toml",
+            "--no-default-features",
+            "--features",
+            "rsfitsio-experimental",
+        ]);
+        clippy.extend([
+            "--",
+            "-D",
+            "warnings",
+            "-A",
+            "clippy::non-send-fields-in-send-ty",
+        ]);
+        self.run_cargo(&clippy);
+
+        // the docs, with broken links as errors
+        let mut doc = vec!["rustdoc", "--lib"];
+        doc.extend(features);
+        doc.extend(["--", "-D", "rustdoc::broken_intra_doc_links"]);
+        self.run_cargo(&doc);
+
+        let mut example = vec!["run"];
+        example.extend(features);
+        example.extend(["--example", "full_example"]);
+        self.run_cargo(&example);
+    }
+
     fn run_test_all(&self, extra_clippy_flags: &str) {
         let tests = [
             TestType::Workspace,
@@ -238,6 +285,7 @@ impl TestRunner {
             TestType::FitsioSrcAndCmakeAndBindgen,
             TestType::FitsioSrcAndBindgen,
             TestType::Bindgen,
+            TestType::Rsfitsio,
         ];
 
         for test in tests {
@@ -267,6 +315,7 @@ impl TestRunner {
             }
             TestType::FitsioSrcAndBindgen => self.run_test_fitsio_src_and_bindgen(),
             TestType::Bindgen => self.run_test_bindgen(),
+            TestType::Rsfitsio => self.run_test_rsfitsio(),
             TestType::All => self.run_test_all(extra_clippy_flags),
         }
     }

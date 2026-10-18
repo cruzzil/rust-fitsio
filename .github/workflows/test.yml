@@ -30,7 +30,7 @@ jobs:
       fail-fast: false
       matrix:
         rust: [stable, beta]
-        test: [array, bindgen, clippy, fitsio-src, fitsio-src-and-cmake, fitsio-src-and-bindgen, full-example, workspace, fitsio-src-and-cmake-and-bindgen]
+        test: [array, bindgen, clippy, fitsio-src, fitsio-src-and-cmake, fitsio-src-and-bindgen, full-example, workspace, fitsio-src-and-cmake-and-bindgen, rsfitsio]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
@@ -73,7 +73,7 @@ jobs:
       fail-fast: false
       matrix:
         rust: [stable, beta]
-        test: [array, bindgen, clippy, fitsio-src, fitsio-src-and-cmake, fitsio-src-and-bindgen, full-example, workspace]
+        test: [array, bindgen, clippy, fitsio-src, fitsio-src-and-cmake, fitsio-src-and-bindgen, full-example, workspace, rsfitsio]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
@@ -174,3 +174,20 @@ jobs:
         shell: msys2 {0}
         run: |
           cargo test -p fitsio --features=fitsio-src,src-cmake
+
+  # rsfitsio needs no C library, so this uses the native msvc toolchain without msys2
+  windows-rsfitsio-test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+
+      - name: Run the tests
+        run: cargo test -p fitsio --no-default-features --features rsfitsio-experimental,array

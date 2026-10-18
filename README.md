@@ -8,16 +8,16 @@ FFI wrapper around cfitsio in Rust
 
 ## Platform support
 
-| Platform      | Support level |
-| ------------- | ------------- |
-| Linux arm     | Tier 1        |
-| Linux x86_64  | Tier 1        |
-| macos x86_64  | Tier 1        |
-| Linux arm64   | Tier 2        |
-| Linux i386    | Tier 2        |
-| macos arm64   | Tier 2        |
-| Windows msys2 | Tier 3        |
-| Windows msvc  | -             |
+| Platform      | Support level            |
+| ------------- | ------------------------ |
+| Linux arm     | Tier 1                   |
+| Linux x86_64  | Tier 1                   |
+| macos x86_64  | Tier 1                   |
+| Linux arm64   | Tier 2                   |
+| Linux i386    | Tier 2                   |
+| macos arm64   | Tier 2                   |
+| Windows msys2 | Tier 3                   |
+| Windows msvc  | Tier 1 (`rsfitsio` only) |
 
 Where the tiers refer to:
 
@@ -25,9 +25,15 @@ Where the tiers refer to:
 - Tier 2: should work but not tested by CI
 - Tier 3: may work, and not tested by CI
 
+Windows msvc is only supported with the [`rsfitsio`](#installation) backend, which needs no C
+library.
+
 ## MSRV
 
 The minimal version of rust we support is 1.63.0.
+
+The `rsfitsio-experimental` feature needs a newer compiler: rust 1.96.0, the minimum
+supported by [`rsfitsio`](https://crates.io/crates/rsfitsio).
 
 ## Installation
 
@@ -59,6 +65,20 @@ and `make`, `ninja` or another CMake-compatible build tool is available:
 ```sh
 cargo build --features fitsio-src,src-cmake
 ```
+
+To avoid C entirely, the experimental `rsfitsio-experimental` feature uses
+[`rsfitsio`](https://crates.io/crates/rsfitsio), a pure Rust port of `cfitsio`, instead of the
+C library. It replaces the default `cfitsio` feature, so default features must be disabled:
+
+```toml,no_sync
+[dependencies]
+fitsio = { version = "*", default-features = false, features = ["rsfitsio-experimental"] }
+```
+
+With `rsfitsio`, `fitsio` calls the safe Rust API of `rsfitsio` rather than going through a C
+ABI, so the raw `fitsio::sys` bindings and `FitsFile::as_raw`/`from_raw` are not available;
+`FitsFile::as_rsfitsio`/`from_rsfitsio` are their safe equivalents. `fitsio` does not
+re-export `rsfitsio`, so to call its routines add it to your own dependencies.
 
 For the time being, it's best to stick to the development version from
 github. The code is tested before being pushed and is relatively

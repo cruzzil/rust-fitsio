@@ -1,6 +1,6 @@
 //! Data types used within `fitsio`
 
-use libc::{
+use std::os::raw::{
     c_double, c_float, c_int, c_long, c_longlong, c_schar, c_short, c_uchar, c_uint, c_ulong,
     c_ulonglong, c_ushort,
 };
@@ -35,7 +35,7 @@ pub enum DataType {
 /// as used by CFITSIO, refer to **C** types, not **Rust** types.
 /// Some compile-time calculations are used to ensure the right C type
 /// is associated with the Rust type.
-pub(crate) trait HasFitsDataType {
+pub(crate) trait HasFitsDataType: bytemuck::Pod {
     /// The [`DataType`] associated with `Self`.
     const FITS_DATA_TYPE: DataType;
 }

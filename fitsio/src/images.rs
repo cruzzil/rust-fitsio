@@ -1,13 +1,10 @@
 //! Image related code
-use crate::errors::{check_status, Result};
+use crate::backend::{self, c_long};
+use crate::errors::{check_status, Error, Result};
 use crate::fitsfile::FitsFile;
 use crate::hdu::{FitsHdu, HduInfo};
-use crate::longnam::*;
-#[cfg(test)]
-use crate::types::DataType;
-use crate::types::HasFitsDataType;
+use std::convert::TryFrom;
 use std::ops::Range;
-use std::ptr;
 
 /// Reading fits images
 pub trait ReadImage: Sized {
@@ -90,6 +87,43 @@ pub trait WriteImage: Sized {
     }
 }
 
+/// The 1-based first and last pixels of an image region, one entry per axis, and the number of
+/// pixels in it. The first range is the fastest varying (`NAXIS1`) axis.
+fn region_pixels(
+    shape: &[usize],
+    ranges: &[&Range<usize>],
+) -> Result<(Vec<c_long>, Vec<c_long>, usize)> {
+    if ranges.len() != shape.len() {
+        return Err(format!(
+            "{} ranges given for an image with {} axes",
+            ranges.len(),
+            shape.len()
+        )
+        .as_str()
+        .into());
+    }
+
+    let mut fpixel = Vec::with_capacity(ranges.len());
+    let mut lpixel = Vec::with_capacity(ranges.len());
+    let mut nelements: usize = 1;
+    for range in ranges {
+        if range.end <= range.start {
+            return Err(format!("empty range {:?} in image region", range)
+                .as_str()
+                .into());
+        }
+        // 1-based, and inclusive of the last pixel
+        let too_large =
+            || Error::Message(format!("range {:?} too large for an image region", range));
+        fpixel.push(c_long::try_from(range.start + 1).map_err(|_| too_large())?);
+        lpixel.push(c_long::try_from(range.end).map_err(|_| too_large())?);
+        nelements = nelements
+            .checked_mul(range.end - range.start)
+            .ok_or_else(too_large)?;
+    }
+    Ok((fpixel, lpixel, nelements))
+}
+
 macro_rules! read_image_impl_vec {
     ($t:ty, $default_value:expr) => {
         impl ReadImage for Vec<$t> {
@@ -104,18 +138,12 @@ macro_rules! read_image_impl_vec {
                         let mut out = vec![$default_value; nelements];
                         let mut status = 0;
 
-                        unsafe {
-                            fits_read_img(
-                                fits_file.fptr.as_mut() as *mut _,
-                                <$t as HasFitsDataType>::FITS_DATA_TYPE.into(),
-                                (range.start + 1) as i64,
-                                nelements as i64,
-                                ptr::null_mut(),
-                                out.as_mut_ptr() as *mut _,
-                                ptr::null_mut(),
-                                &mut status,
-                            );
-                        }
+                        backend::fits_read_img(
+                            &mut fits_file.fptr,
+                            (range.start + 1) as i64,
+                            &mut out,
+                            &mut status,
+                        );
 
                         check_status(status).map(|_| out)
                     }
@@ -161,42 +189,20 @@ macro_rules! read_image_impl_vec {
                 ranges: &[&Range<usize>],
             ) -> Result<Self> {
                 match hdu.info {
-                    HduInfo::ImageInfo { .. } => {
-                        let n_ranges = ranges.len();
-
-                        let mut fpixel = Vec::with_capacity(n_ranges);
-                        let mut lpixel = Vec::with_capacity(n_ranges);
-
-                        let mut nelements = 1;
-                        for range in ranges {
-                            let start = range.start + 1;
-                            // No +1 as the range is exclusive
-                            let end = range.end;
-                            fpixel.push(start as _);
-                            lpixel.push(end as _);
-
-                            nelements *= (end + 1) - start;
-                        }
-
-                        let mut inc: Vec<_> = (0..n_ranges).map(|_| 1).collect();
-                        let vec_size = nelements;
-                        let mut out = vec![$default_value; vec_size];
+                    HduInfo::ImageInfo { ref shape, .. } => {
+                        let (fpixel, lpixel, nelements) = region_pixels(shape, ranges)?;
+                        let inc = vec![1; fpixel.len()];
+                        let mut out = vec![$default_value; nelements];
                         let mut status = 0;
-                        let datatype = <$t as HasFitsDataType>::FITS_DATA_TYPE;
 
-                        unsafe {
-                            fits_read_subset(
-                                fits_file.fptr.as_mut() as *mut _, // fptr
-                                datatype.into(),                   // datatype
-                                fpixel.as_mut_ptr(),               // fpixel
-                                lpixel.as_mut_ptr(),               // lpixel
-                                inc.as_mut_ptr(),                  // inc
-                                ptr::null_mut(),                   // nulval
-                                out.as_mut_ptr() as *mut _,        // array
-                                ptr::null_mut(),                   // anynul
-                                &mut status,                       // status
-                            );
-                        }
+                        backend::fits_read_subset(
+                            &mut fits_file.fptr,
+                            &fpixel,
+                            &lpixel,
+                            &inc,
+                            &mut out,
+                            &mut status,
+                        );
 
                         check_status(status).map(|_| out)
                     }
@@ -224,16 +230,12 @@ macro_rules! write_image_impl {
                         let nelements = range.end - range.start;
                         assert!(data.len() >= nelements);
                         let mut status = 0;
-                        unsafe {
-                            fits_write_img(
-                                fits_file.fptr.as_mut() as *mut _,
-                                <$t as HasFitsDataType>::FITS_DATA_TYPE.into(),
-                                (range.start + 1) as i64,
-                                nelements as i64,
-                                data.as_ptr() as *mut _,
-                                &mut status,
-                            );
-                        }
+                        backend::fits_write_img(
+                            &mut fits_file.fptr,
+                            (range.start + 1) as i64,
+                            &data[..nelements],
+                            &mut status,
+                        );
 
                         check_status(status)
                     }
@@ -251,32 +253,26 @@ macro_rules! write_image_impl {
                 data: &[Self],
             ) -> Result<()> {
                 match hdu.info {
-                    HduInfo::ImageInfo { .. } => {
-                        let n_ranges = ranges.len();
-
-                        let mut fpixel = Vec::with_capacity(n_ranges);
-                        let mut lpixel = Vec::with_capacity(n_ranges);
-
-                        for range in ranges {
-                            let start = range.start + 1;
-                            // No +1 as the range is exclusive
-                            let end = range.end;
-                            fpixel.push(start as _);
-                            lpixel.push(end as _);
+                    HduInfo::ImageInfo { ref shape, .. } => {
+                        let (fpixel, lpixel, nelements) = region_pixels(shape, ranges)?;
+                        if data.len() < nelements {
+                            return Err(format!(
+                                "not enough data ({} elements) to write a region of {} pixels",
+                                data.len(),
+                                nelements
+                            )
+                            .as_str()
+                            .into());
                         }
-
                         let mut status = 0;
 
-                        unsafe {
-                            fits_write_subset(
-                                fits_file.fptr.as_mut() as *mut _,
-                                <$t as HasFitsDataType>::FITS_DATA_TYPE.into(),
-                                fpixel.as_mut_ptr(),
-                                lpixel.as_mut_ptr(),
-                                data.as_ptr() as *mut _,
-                                &mut status,
-                            );
-                        }
+                        backend::fits_write_subset(
+                            &mut fits_file.fptr,
+                            &fpixel,
+                            &lpixel,
+                            data,
+                            &mut status,
+                        );
 
                         check_status(status)
                     }
@@ -618,8 +614,8 @@ mod tests {
     // helper macro to write a file with an image and table of a specific
     // type, using the low level `fitsio-sys`.
     macro_rules! example_file {
-        ($type:ty, $image_type:expr, $data_type:expr, $cb:expr) => {
-            use crate::stringutils::StringList;
+        ($type:ty, $image_type:expr, $cb:expr) => {
+            use crate::backend::{self, Handle};
 
             with_temp_file(|filename| {
                 let dimensions = vec![5usize, 5];
@@ -627,82 +623,44 @@ mod tests {
                     (0..(dimensions[0] * dimensions[1]) as $type).collect();
                 let column: Vec<_> = (0..10).into_iter().map(|i| i + 200).collect();
                 {
-                    let mut fptr = std::ptr::null_mut();
                     let mut status = 0;
                     let c_filename = std::ffi::CString::new(filename).unwrap();
 
-                    unsafe {
-                        crate::longnam::fits_create_file(
-                            &mut fptr as *mut *mut crate::sys::fitsfile,
-                            c_filename.as_ptr(),
-                            &mut status,
-                        );
-                    }
+                    let mut fptr = Handle::create(&c_filename, &mut status).unwrap();
                     let _ = crate::errors::check_status(status).unwrap();
 
                     // write the primary u16 image
-                    let naxis = dimensions.len();
-                    let long_dimensions: Vec<libc::c_long> =
-                        dimensions.iter().map(|d| *d as libc::c_long).collect();
-                    unsafe {
-                        crate::longnam::fits_create_img(
-                            fptr as *mut _,
-                            $image_type,
-                            naxis as _,
-                            long_dimensions.as_ptr() as *mut _,
-                            &mut status,
-                        );
-                    }
+                    let long_dimensions: Vec<std::os::raw::c_long> = dimensions
+                        .iter()
+                        .map(|d| *d as std::os::raw::c_long)
+                        .collect();
+                    backend::fits_create_img(&mut fptr, $image_type, &long_dimensions, &mut status);
                     let _ = crate::errors::check_status(status).unwrap();
 
-                    unsafe {
-                        crate::longnam::fits_write_img(
-                            fptr as *mut _,
-                            $data_type,
-                            1,
-                            image_data.len() as _,
-                            image_data.as_ptr() as *mut _,
-                            &mut status,
-                        );
-                    }
+                    backend::fits_write_img(&mut fptr, 1, &image_data, &mut status);
                     let _ = crate::errors::check_status(status).unwrap();
 
                     // write the table
-                    let ttype = StringList::from_slice(&["example".to_string()]).unwrap();
+                    let ttype = [std::ffi::CString::new("example").unwrap()];
                     // TODO(srw): this form string should be different depending on the type
-                    let tform = StringList::from_slice(&["1I".to_string()]).unwrap();
-                    let tunit = StringList::from_slice(&["".to_string()]).unwrap();
-                    unsafe {
-                        crate::longnam::fits_create_tbl(
-                            fptr as *mut _,
-                            crate::sys::BINARY_TBL as _,
-                            0,
-                            1,
-                            ttype.as_ptr(),
-                            tform.as_ptr(),
-                            tunit.as_ptr(),
-                            std::ptr::null_mut(),
-                            &mut status,
-                        );
-                    }
+                    let tform = [std::ffi::CString::new("1I").unwrap()];
+                    backend::fits_create_tbl(
+                        &mut fptr,
+                        HduInfo::TableInfo {
+                            column_descriptions: Vec::new(),
+                            num_rows: 0,
+                        }
+                        .into(),
+                        0,
+                        &ttype,
+                        &tform,
+                        None,
+                        &mut status,
+                    );
 
-                    unsafe {
-                        crate::longnam::fits_write_col(
-                            fptr as *mut _,
-                            $data_type,
-                            1,
-                            1,
-                            1,
-                            10,
-                            column.as_ptr() as *mut _,
-                            &mut status,
-                        );
-                    }
-
-                    unsafe {
-                        crate::longnam::fits_close_file(fptr as *mut _, &mut status);
-                    }
+                    backend::fits_write_col(&mut fptr, 1, 1, 1, &column, &mut status);
                     let _ = crate::errors::check_status(status).unwrap();
+                    // the file is closed when `fptr` is dropped
                 }
                 $cb(filename, image_data, column);
             });
@@ -714,7 +672,6 @@ mod tests {
         example_file!(
             i16,
             crate::images::ImageType::Short.into(),
-            crate::images::DataType::TSHORT.into(),
             |filename, image_data, column| {
                 // now read the file and check the output
                 let mut f = FitsFile::open(filename).unwrap();
@@ -734,7 +691,6 @@ mod tests {
         example_file!(
             u16,
             crate::images::ImageType::UnsignedShort.into(),
-            crate::images::DataType::TUSHORT.into(),
             |filename, image_data, column| {
                 // now read the file and check the output
                 let mut f = FitsFile::open(filename).unwrap();

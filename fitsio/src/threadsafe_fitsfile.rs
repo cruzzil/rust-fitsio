@@ -23,6 +23,9 @@ pub struct ThreadsafeFitsFile(Arc<Mutex<FitsFile>>);
 //
 // Safety: we explicitly wrap the type in an Arc::Mutex which is threadsafe. The Mutex ensures that
 // only one thread can be modifying the file at once.
+//
+// With the rsfitsio backend `FitsFile` is already `Send`, so this is only needed for cfitsio.
+#[cfg(feature = "cfitsio")]
 unsafe impl Send for ThreadsafeFitsFile {}
 
 impl FitsFile {
@@ -70,24 +73,28 @@ mod tests {
         let f = FitsFile::open("../testdata/full_example.fits").unwrap();
         let f = f.threadsafe();
 
-        /* Spawn loads of threads... */
-        let mut handles = Vec::new();
-        for i in 0..num_threads() {
-            let f1 = f.clone();
-            let handle = thread::spawn(move || {
-                /* Get the underlyng fits file back */
-                let mut t = f1.lock().unwrap();
+        /* Spawn loads of threads, in batches to stay under OS thread limits (e.g. on macOS) */
+        let batch_size = 100;
+        for batch in 0..num_threads() / batch_size {
+            let mut handles = Vec::new();
+            for j in 0..batch_size {
+                let i = batch * batch_size + j;
+                let f1 = f.clone();
+                let handle = thread::spawn(move || {
+                    /* Get the underlyng fits file back */
+                    let mut t = f1.lock().unwrap();
 
-                /* Fetch a different HDU per thread */
-                let hdu_num = i % 2;
-                let _hdu = t.hdu(hdu_num).unwrap();
-            });
-            handles.push(handle);
-        }
+                    /* Fetch a different HDU per thread */
+                    let hdu_num = i % 2;
+                    let _hdu = t.hdu(hdu_num).unwrap();
+                });
+                handles.push(handle);
+            }
 
-        /* Wait for all of the threads to finish */
-        for handle in handles {
-            handle.join().unwrap();
+            /* Wait for all of the threads to finish */
+            for handle in handles {
+                handle.join().unwrap();
+            }
         }
     }
 }
