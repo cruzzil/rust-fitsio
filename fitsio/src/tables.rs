@@ -283,6 +283,13 @@ impl ReadsCol for String {
                     &mut status,
                 );
 
+                if status == backend::BAD_TFORM {
+                    return Err(Error::Message(format!(
+                        "cannot read column {:?} as strings: it is variable-length, or its \
+                         TDISPn display format is too long or too wide",
+                        test_name
+                    )));
+                }
                 check_status(status)?;
 
                 let mut out = Vec::with_capacity(num_output_rows);

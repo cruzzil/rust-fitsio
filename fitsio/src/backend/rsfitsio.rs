@@ -8,8 +8,8 @@
 #![forbid(unsafe_code)]
 
 use super::{
-    c_char, c_int, c_long, col_str_len, subset_len, FLEN_COMMENT, FLEN_FILENAME, FLEN_STATUS,
-    FLEN_VALUE,
+    c_char, c_int, c_long, checked_subset_len, col_str_buffer_len, FLEN_COMMENT, FLEN_FILENAME,
+    FLEN_STATUS, FLEN_VALUE,
 };
 use crate::types::HasFitsDataType;
 use bytemuck::{cast_slice, cast_slice_mut};
@@ -366,29 +366,6 @@ pub(crate) fn fits_read_img<T: HasFitsDataType>(
     );
 }
 
-/// Number of pixels in a region of the current image, setting `status` if the region does not
-/// have one entry per image axis
-fn checked_subset_len(
-    f: &mut Handle,
-    fpixel: &[c_long],
-    lpixel: &[c_long],
-    inc: Option<&[c_long]>,
-    status: &mut c_int,
-) -> Option<usize> {
-    let mut naxis = 0;
-    fits_get_img_dim(f, &mut naxis, status);
-    if *status != 0 {
-        return None;
-    }
-    match subset_len(naxis, fpixel, lpixel, inc) {
-        Ok(len) => Some(len),
-        Err(e) => {
-            *status = e;
-            None
-        }
-    }
-}
-
 /// Read the region running from the 1-based `fpixel` to `lpixel` inclusive, stepping by `inc`
 ///
 /// # Panics
@@ -521,32 +498,17 @@ pub(crate) fn fits_read_col_str(
     nelem: usize,
     status: &mut c_int,
 ) -> Vec<Vec<c_char>> {
-    let mut display_width = 0;
-    let (mut typecode, mut repeat, mut width) = (0, 0, 0);
-    fits_get_col_display_width(f, colnum, &mut display_width, status);
-    api::fits_get_coltypell(
-        f.as_rsfitsio(),
-        colnum,
-        Some(&mut typecode),
-        Some(&mut repeat),
-        Some(&mut width),
-        status,
-    );
-    if *status != 0 {
-        return Vec::new();
-    }
-    let len = match col_str_len(display_width, typecode, repeat, width) {
-        Ok(len) => len,
-        Err(e) => {
-            *status = e;
-            return Vec::new();
-        }
+    let len = match col_str_buffer_len(f, colnum, status) {
+        Some(len) => len,
+        None => return Vec::new(),
     };
 
     let mut array = vec![vec![0; len]; nelem];
     let mut bufs: Vec<&mut [c_char]> = array.iter_mut().map(|s| s.as_mut_slice()).collect();
-    // An empty null value turns off null checking
+    // An empty null value turns off null checking for string columns. rsfitsio, like CFITSIO,
+    // needs somewhere to record nulls in logical and numeric columns.
     let nulval: [c_char; 1] = [0];
+    let mut anynul = 0;
     api::fits_read_col_str(
         f.as_rsfitsio(),
         colnum,
@@ -555,7 +517,7 @@ pub(crate) fn fits_read_col_str(
         nelem as i64,
         Some(&nulval),
         &mut bufs,
-        None,
+        Some(&mut anynul),
         status,
     );
     array
@@ -598,6 +560,25 @@ pub(crate) fn fits_write_col_str(
         firstelem,
         strs.len() as i64,
         &strs,
+        status,
+    );
+}
+
+/// Fetch a column's datatype code (negative for variable-length columns), repeat count and width
+pub(crate) fn fits_get_coltype(
+    f: &mut Handle,
+    colnum: c_int,
+    typecode: &mut c_int,
+    repeat: &mut i64,
+    width: &mut i64,
+    status: &mut c_int,
+) {
+    api::fits_get_coltypell(
+        f.as_rsfitsio(),
+        colnum,
+        Some(typecode),
+        Some(repeat),
+        Some(width),
         status,
     );
 }

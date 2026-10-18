@@ -103,3 +103,56 @@ fn write_region_with_too_little_data() -> Result<(), Box<dyn std::error::Error>>
     assert_eq!(read, data);
     Ok(())
 }
+
+/// A table with an integer column `A` holding 1, 2, 3, and the given extra header keywords
+fn int_table(
+    dir: &TempDir,
+    keys: &[(&str, &str)],
+) -> Result<(FitsFile, fitsio::hdu::FitsHdu), Box<dyn std::error::Error>> {
+    let mut f = FitsFile::create(temp_path(dir)).open()?;
+    let columns = [ColumnDescription::new("A")
+        .with_type(ColumnDataType::Int)
+        .create()?];
+    let hdu = f.create_table("TABLE".to_string(), &columns)?;
+    hdu.write_col(&mut f, "A", &[1i32, 2, 3])?;
+    for (key, value) in keys {
+        hdu.write_key(&mut f, key, *value)?;
+    }
+    Ok((f, hdu))
+}
+
+#[test]
+fn integer_column_with_nulls_as_strings() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let mut f = FitsFile::create(temp_path(&dir)).open()?;
+    let columns = [ColumnDescription::new("A")
+        .with_type(ColumnDataType::Int)
+        .create()?];
+    let hdu = f.create_table("TABLE".to_string(), &columns)?;
+    hdu.write_key(&mut f, "TNULL1", -99i64)?;
+    let hdu = f.hdu("TABLE")?;
+    hdu.write_col(&mut f, "A", &[1i32, -99, 3])?;
+
+    let read: Vec<String> = hdu.read_col(&mut f, "A")?;
+    assert_eq!(read.len(), 3);
+    assert_eq!(read[0].trim(), "1");
+    assert_eq!(read[2].trim(), "3");
+    Ok(())
+}
+
+#[test]
+fn display_formats_cfitsio_cannot_hold() -> Result<(), Box<dyn std::error::Error>> {
+    // too long for CFITSIO's 20 character buffers, too wide for an int, and too wide to format
+    for tdisp in ["I1234567890123456789", "I3000000000", "I200000000"] {
+        let dir = tempfile::tempdir()?;
+        let (mut f, hdu) = int_table(&dir, &[("TDISP1", tdisp)])?;
+        assert!(
+            hdu.read_col::<String>(&mut f, "A").is_err(),
+            "TDISP1 = {}",
+            tdisp
+        );
+        // reading the values themselves does not use the display format
+        assert_eq!(hdu.read_col::<i32>(&mut f, "A")?, [1, 2, 3]);
+    }
+    Ok(())
+}

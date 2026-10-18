@@ -1,8 +1,9 @@
 //! Image related code
 use crate::backend::{self, c_long};
-use crate::errors::{check_status, Result};
+use crate::errors::{check_status, Error, Result};
 use crate::fitsfile::FitsFile;
 use crate::hdu::{FitsHdu, HduInfo};
+use std::convert::TryFrom;
 use std::ops::Range;
 
 /// Reading fits images
@@ -112,9 +113,13 @@ fn region_pixels(
                 .into());
         }
         // 1-based, and inclusive of the last pixel
-        fpixel.push((range.start + 1) as c_long);
-        lpixel.push(range.end as c_long);
-        nelements *= range.end - range.start;
+        let too_large =
+            || Error::Message(format!("range {:?} too large for an image region", range));
+        fpixel.push(c_long::try_from(range.start + 1).map_err(|_| too_large())?);
+        lpixel.push(c_long::try_from(range.end).map_err(|_| too_large())?);
+        nelements = nelements
+            .checked_mul(range.end - range.start)
+            .ok_or_else(too_large)?;
     }
     Ok((fpixel, lpixel, nelements))
 }
