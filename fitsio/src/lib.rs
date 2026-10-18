@@ -895,12 +895,12 @@ let newhdu = hdu.delete_column(&mut fptr, 0)?;
 # Backends
 
 By default `fitsio` calls the C [`cfitsio`][cfitsio] library through
-[`fitsio-sys`][fitsio-sys]. Alternatively, the `rsfitsio` feature uses
+[`fitsio-sys`][fitsio-sys]. Alternatively, the experimental `rsfitsio-experimental` feature uses
 [`rsfitsio`][rsfitsio], a pure Rust port of CFITSIO, so that no C library is needed:
 
 ```toml
 [dependencies]
-fitsio = { version = "*", default-features = false, features = ["rsfitsio"] }
+fitsio = { version = "*", default-features = false, features = ["rsfitsio-experimental"] }
 ```
 
 The two backends are mutually exclusive. With `rsfitsio`, `fitsio` calls the safe Rust API of
@@ -1092,7 +1092,7 @@ let _hdu = t.hdu(hdu_num).unwrap();
 pub use fitsio_sys as sys;
 
 // re-export version information
-#[cfg(all(feature = "rsfitsio", not(feature = "cfitsio")))]
+#[cfg(all(feature = "rsfitsio-experimental", not(feature = "cfitsio")))]
 pub use crate::version::{cfitsio_version, CfitsioVersion};
 #[cfg(feature = "cfitsio")]
 pub use sys::{cfitsio_version, CfitsioVersion};
@@ -1107,7 +1107,7 @@ mod stringutils;
 #[cfg(test)]
 mod testhelpers;
 mod types;
-#[cfg(all(feature = "rsfitsio", not(feature = "cfitsio")))]
+#[cfg(all(feature = "rsfitsio-experimental", not(feature = "cfitsio")))]
 mod version;
 
 // Public mods

@@ -775,7 +775,7 @@ impl FitsFile {
     /// ```
     ///
     /// [`FitsHdu`]: hdu/struct.FitsHdu.html
-    #[cfg(feature = "rsfitsio")]
+    #[cfg(feature = "rsfitsio-experimental")]
     pub fn as_rsfitsio(&mut self) -> &mut rsfitsio::fitsio::fitsfile {
         self.fptr.as_rsfitsio()
     }
@@ -805,7 +805,7 @@ impl FitsFile {
     /// # Ok(())
     /// # }
     /// ```
-    #[cfg(feature = "rsfitsio")]
+    #[cfg(feature = "rsfitsio-experimental")]
     pub fn from_rsfitsio(
         fptr: Box<rsfitsio::fitsio::fitsfile>,
         mode: FileOpenMode,
@@ -1662,7 +1662,7 @@ mod test {
         });
     }
 
-    #[cfg(feature = "rsfitsio")]
+    #[cfg(feature = "rsfitsio-experimental")]
     #[test]
     fn test_get_filename_rsfitsio() {
         use rsfitsio::aliases::rust_api::fits_open_file;

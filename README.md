@@ -32,8 +32,8 @@ library.
 
 The minimal version of rust we support is 1.63.0.
 
-The `rsfitsio` feature needs a newer compiler: rust 1.96.0, the minimum supported by
-[`rsfitsio`](https://crates.io/crates/rsfitsio).
+The `rsfitsio-experimental` feature needs a newer compiler: rust 1.96.0, the minimum
+supported by [`rsfitsio`](https://crates.io/crates/rsfitsio).
 
 ## Installation
 
@@ -66,13 +66,13 @@ and `make`, `ninja` or another CMake-compatible build tool is available:
 cargo build --features fitsio-src,src-cmake
 ```
 
-To avoid C entirely, the `rsfitsio` feature uses [`rsfitsio`](https://crates.io/crates/rsfitsio),
-a pure Rust port of `cfitsio`, instead of the C library. It replaces the default `cfitsio`
-feature, so default features must be disabled:
+To avoid C entirely, the experimental `rsfitsio-experimental` feature uses
+[`rsfitsio`](https://crates.io/crates/rsfitsio), a pure Rust port of `cfitsio`, instead of the
+C library. It replaces the default `cfitsio` feature, so default features must be disabled:
 
 ```toml,no_sync
 [dependencies]
-fitsio = { version = "*", default-features = false, features = ["rsfitsio"] }
+fitsio = { version = "*", default-features = false, features = ["rsfitsio-experimental"] }
 ```
 
 With `rsfitsio`, `fitsio` calls the safe Rust API of `rsfitsio` rather than going through a C

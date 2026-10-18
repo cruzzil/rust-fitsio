@@ -234,7 +234,7 @@ impl TestRunner {
             "fitsio/Cargo.toml",
             "--no-default-features",
             "--features",
-            "rsfitsio,array",
+            "rsfitsio-experimental,array",
         ];
         let mut nextest = vec!["nextest", "run"];
         nextest.extend(features);
@@ -251,7 +251,7 @@ impl TestRunner {
             "fitsio/Cargo.toml",
             "--no-default-features",
             "--features",
-            "rsfitsio",
+            "rsfitsio-experimental",
         ]);
         clippy.extend([
             "--",

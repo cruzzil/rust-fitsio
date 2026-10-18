@@ -190,4 +190,4 @@ jobs:
           override: true
 
       - name: Run the tests
-        run: cargo test -p fitsio --no-default-features --features rsfitsio,array
+        run: cargo test -p fitsio --no-default-features --features rsfitsio-experimental,array
