@@ -23,6 +23,9 @@ pub struct ThreadsafeFitsFile(Arc<Mutex<FitsFile>>);
 //
 // Safety: we explicitly wrap the type in an Arc::Mutex which is threadsafe. The Mutex ensures that
 // only one thread can be modifying the file at once.
+//
+// With the rsfitsio backend `FitsFile` is already `Send`, so this is only needed for cfitsio.
+#[cfg(feature = "cfitsio")]
 unsafe impl Send for ThreadsafeFitsFile {}
 
 impl FitsFile {

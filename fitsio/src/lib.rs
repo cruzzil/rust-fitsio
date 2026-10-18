@@ -950,7 +950,7 @@ This (unsafe) pointer can then be used with the underlying [`fitsio-sys`][fitsio
 The inverse of the process described above can be performed. Note: calling this [`FitsFile`]
 constructor is _unsafe_ => it is up to the caller to guarantee that the pointer given was
 
-1. created by `cfitsio` (or [`fitsio_sys`]), and
+1. created by `cfitsio` (or [`fitsio-sys`][fitsio-sys]), and
 2. it represents a valid FITS file.
 
 Given these two things, a [`FitsFile`] can be created (C backend only; with `rsfitsio` use the

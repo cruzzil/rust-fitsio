@@ -262,6 +262,12 @@ impl TestRunner {
         ]);
         self.run_cargo(&clippy);
 
+        // the docs, with broken links as errors
+        let mut doc = vec!["rustdoc", "--lib"];
+        doc.extend(features);
+        doc.extend(["--", "-D", "warnings"]);
+        self.run_cargo(&doc);
+
         let mut example = vec!["run"];
         example.extend(features);
         example.extend(["--example", "full_example"]);

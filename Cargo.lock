@@ -407,7 +407,6 @@ dependencies = [
  "criterion",
  "fitsio-derive",
  "fitsio-sys",
- "libc",
  "ndarray",
  "proc-macro2",
  "rsfitsio",

@@ -25,7 +25,6 @@ targets = ["x86_64-unknown-linux-gnu"]
 [dependencies]
 bytemuck = "1.14"
 fitsio-sys = { version = "0.5", path = "../fitsio-sys", optional = true }
-libc = "0.2.44"
 ndarray = { version = "0.17.1", optional = true }
 rsfitsio = { version = "0.470.6", optional = true }
 

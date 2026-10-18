@@ -790,7 +790,7 @@ impl FitsFile {
     /// ```
     ///
     /// [`FitsHdu`]: hdu/struct.FitsHdu.html
-    #[cfg(feature = "rsfitsio-experimental")]
+    #[cfg(all(feature = "rsfitsio-experimental", not(feature = "cfitsio")))]
     pub fn as_rsfitsio(&mut self) -> &mut rsfitsio::fitsio::fitsfile {
         self.fptr.as_rsfitsio()
     }
@@ -809,10 +809,11 @@ impl FitsFile {
     /// use rsfitsio::fitsio::READONLY;
     ///
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /// let name = std::ffi::CString::new("../testdata/full_example.fits")?;
+    /// // a nul-terminated file name, as rsfitsio's `c_char`s
+    /// let name: Vec<_> = b"../testdata/full_example.fits\0".iter().map(|&b| b as _).collect();
     /// let mut fptr = None;
     /// let mut status = 0;
-    /// fits_open_file(&mut fptr, bytemuck::cast_slice(name.as_bytes_with_nul()), READONLY, &mut status);
+    /// fits_open_file(&mut fptr, &name, READONLY, &mut status);
     /// assert_eq!(status, 0);
     ///
     /// let mut f = FitsFile::from_rsfitsio(fptr.unwrap(), FileOpenMode::READONLY)?;
@@ -820,7 +821,7 @@ impl FitsFile {
     /// # Ok(())
     /// # }
     /// ```
-    #[cfg(feature = "rsfitsio-experimental")]
+    #[cfg(all(feature = "rsfitsio-experimental", not(feature = "cfitsio")))]
     pub fn from_rsfitsio(
         fptr: Box<rsfitsio::fitsio::fitsfile>,
         mode: FileOpenMode,
@@ -1677,7 +1678,7 @@ mod test {
         });
     }
 
-    #[cfg(feature = "rsfitsio-experimental")]
+    #[cfg(all(feature = "rsfitsio-experimental", not(feature = "cfitsio")))]
     #[test]
     fn test_get_filename_rsfitsio() {
         use rsfitsio::aliases::rust_api::fits_open_file;
