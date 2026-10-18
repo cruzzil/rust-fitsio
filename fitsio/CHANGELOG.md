@@ -18,8 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `fitsio-sys` is now an optional dependency, enabled by the default `cfitsio` feature. Builds
-  with `default-features = false` must enable `cfitsio` (or `rsfitsio`).
+- **Breaking:** `fitsio-sys` is now an optional dependency, enabled by the new default
+  `cfitsio` feature. Builds with `default-features = false` must enable `cfitsio` (or
+  `rsfitsio-experimental`).
+- `fitsio::sys`, `FitsFile::as_raw` and `FitsFile::from_raw` are only available with the
+  `cfitsio` feature.
 - All calls into cfitsio go through an internal backend module, so the rest of the crate no
   longer handles raw pointers.
 
