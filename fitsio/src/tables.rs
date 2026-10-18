@@ -4,8 +4,7 @@ use crate::errors::{check_status, Error, FitsError, IndexError, Result};
 use crate::fitsfile::FitsFile;
 use crate::hdu::{FitsHdu, HduInfo};
 use crate::stringutils::status_to_string;
-use crate::types::{DataType, HasFitsDataType};
-use bytemuck::{cast_slice, cast_slice_mut};
+use crate::types::DataType;
 use std::ffi;
 use std::mem::size_of;
 use std::ops::Range;
@@ -81,12 +80,10 @@ macro_rules! reads_col_impl {
                         let mut status = 0;
                         backend::fits_read_col(
                             &mut fits_file.fptr,
-                            <$t as HasFitsDataType>::FITS_DATA_TYPE.into(),
                             (column_number + 1) as i32,
                             (range.start + 1) as i64,
                             1,
-                            (num_output_rows * repeat) as i64,
-                            cast_slice_mut(&mut out),
+                            &mut out,
                             &mut status,
                         );
 
@@ -138,12 +135,10 @@ macro_rules! reads_col_impl {
 
                         backend::fits_read_col(
                             &mut fits_file.fptr,
-                            <$t as HasFitsDataType>::FITS_DATA_TYPE.into(),
                             (column_number + 1) as i32,
                             (idx + 1) as i64,
                             1,
-                            1,
-                            bytemuck::bytes_of_mut(&mut out),
+                            std::slice::from_mut(&mut out),
                             &mut status,
                         );
 
@@ -279,19 +274,12 @@ impl ReadsCol for String {
                     .position(|desc| desc.name == test_name)
                     .ok_or_else(|| Error::Message(format!("Cannot find column {:?}", test_name)))?;
 
-                /* Set up the storage arrays for the column string values */
                 let mut status = 0;
-                let width = column_display_width(fits_file, column_number)?;
-
-                // CFITSIO writes up to `width` characters plus a terminating nul
-                let mut vecs: Vec<Vec<c_char>> = vec![vec![0; width + 1]; num_output_rows];
-
-                backend::fits_read_col_str(
+                let vecs = backend::fits_read_col_str(
                     &mut fits_file.fptr,
                     (column_number + 1) as _,
                     (range.start + 1) as _,
-                    1,
-                    &mut vecs,
+                    num_output_rows,
                     &mut status,
                 );
 
@@ -373,15 +361,22 @@ macro_rules! writes_col_impl {
                         let colno = hdu.get_column_no(fits_file, col_name.into())?;
                         // TODO: check that the column exists in the file
                         let mut status = 0;
-                        let n_elements = (rows.end - rows.start);
+                        let n_elements = rows.end.saturating_sub(rows.start);
+                        if col_data.len() < n_elements {
+                            return Err(format!(
+                                "not enough data ({} elements) to write {} rows",
+                                col_data.len(),
+                                n_elements
+                            )
+                            .as_str()
+                            .into());
+                        }
                         backend::fits_write_col(
                             &mut fits_file.fptr,
-                            <$t as HasFitsDataType>::FITS_DATA_TYPE.into(),
                             (colno + 1) as _,
                             (rows.start + 1) as _,
                             1,
-                            n_elements as _,
-                            cast_slice(col_data),
+                            &col_data[..n_elements],
                             &mut status,
                         );
                         check_status(status).and_then(|_| fits_file.current_hdu())
@@ -454,22 +449,6 @@ pub trait FitsRow: ::std::default::Default {
     fn from_table(tbl: &FitsHdu, fits_file: &mut FitsFile, idx: usize) -> Result<Self>
     where
         Self: Sized;
-}
-
-/// Helper function to get the display width of a column
-pub(crate) fn column_display_width(
-    fits_file: &mut FitsFile,
-    column_number: usize,
-) -> Result<usize> {
-    let mut status = 0;
-    let mut width = 0;
-    backend::fits_get_col_display_width(
-        &mut fits_file.fptr,
-        (column_number + 1) as _,
-        &mut width,
-        &mut status,
-    );
-    check_status(status).map(|_| width as usize)
 }
 
 /// Description for new columns
@@ -915,14 +894,6 @@ mod test {
         /* Do not call `with_type` */
         let bad_desc = ColumnDescription::new("FOO").create();
         assert!(bad_desc.is_err());
-    }
-
-    #[test]
-    fn test_fetching_column_width() {
-        let mut f = FitsFile::open("../testdata/full_example.fits").unwrap();
-        f.hdu(1).unwrap();
-        let width = column_display_width(&mut f, 3).unwrap();
-        assert_eq!(width, 7);
     }
 
     #[test]

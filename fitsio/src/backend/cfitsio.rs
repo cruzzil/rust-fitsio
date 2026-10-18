@@ -2,12 +2,17 @@
 //!
 //! The safety argument for every call is the same: the `fitsfile` pointer is owned by a live
 //! [`Handle`], every buffer is a Rust slice at least as long as CFITSIO is told it is, and every
-//! string is nul-terminated.
+//! string is nul-terminated. Functions here check those lengths themselves rather than trusting
+//! their callers: numeric buffers are typed slices whose length is the element count, image
+//! regions are checked against the image's axes, and string buffers are sized from the column.
 
 // C uses long argument lists
 #![allow(clippy::too_many_arguments)]
 
-use super::{c_char, c_int, c_long, FLEN_COMMENT, FLEN_FILENAME, FLEN_STATUS, FLEN_VALUE};
+use super::{
+    c_char, c_int, c_long, col_str_len, subset_len, FLEN_COMMENT, FLEN_FILENAME, FLEN_STATUS,
+    FLEN_VALUE,
+};
 use crate::types::HasFitsDataType;
 use fitsio_sys as sys;
 use std::ffi::c_void;
@@ -400,21 +405,19 @@ pub(crate) fn fits_write_key_str(
     }
 }
 
-/// Read `nelem` pixels of type `datatype` into `array`, which must hold at least that many
-pub(crate) fn fits_read_img(
+/// Read `array.len()` pixels, starting at the 1-based `firstelem`
+pub(crate) fn fits_read_img<T: HasFitsDataType>(
     f: &mut Handle,
-    datatype: c_int,
     firstelem: i64,
-    nelem: i64,
-    array: &mut [u8],
+    array: &mut [T],
     status: &mut c_int,
 ) {
     unsafe {
         sys::ffgpv(
             f.as_raw(),
-            datatype,
+            T::FITS_DATA_TYPE.into(),
             firstelem,
-            nelem,
+            array.len() as i64,
             ptr::null_mut(),
             array.as_mut_ptr() as *mut c_void,
             ptr::null_mut(),
@@ -423,19 +426,51 @@ pub(crate) fn fits_read_img(
     }
 }
 
-pub(crate) fn fits_read_subset(
+/// Number of pixels in a region of the current image, setting `status` if the region does not
+/// have one entry per image axis
+fn checked_subset_len(
     f: &mut Handle,
-    datatype: c_int,
+    fpixel: &[c_long],
+    lpixel: &[c_long],
+    inc: Option<&[c_long]>,
+    status: &mut c_int,
+) -> Option<usize> {
+    let mut naxis = 0;
+    fits_get_img_dim(f, &mut naxis, status);
+    if *status != 0 {
+        return None;
+    }
+    match subset_len(naxis, fpixel, lpixel, inc) {
+        Ok(len) => Some(len),
+        Err(e) => {
+            *status = e;
+            None
+        }
+    }
+}
+
+/// Read the region running from the 1-based `fpixel` to `lpixel` inclusive, stepping by `inc`
+///
+/// # Panics
+///
+/// If `array` is smaller than the region.
+pub(crate) fn fits_read_subset<T: HasFitsDataType>(
+    f: &mut Handle,
     fpixel: &[c_long],
     lpixel: &[c_long],
     inc: &[c_long],
-    array: &mut [u8],
+    array: &mut [T],
     status: &mut c_int,
 ) {
+    let len = match checked_subset_len(f, fpixel, lpixel, Some(inc), status) {
+        Some(len) => len,
+        None => return,
+    };
+    assert!(array.len() >= len, "array smaller than the image region");
     unsafe {
         sys::ffgsv(
             f.as_raw(),
-            datatype,
+            T::FITS_DATA_TYPE.into(),
             fpixel.as_ptr() as *mut c_long,
             lpixel.as_ptr() as *mut c_long,
             inc.as_ptr() as *mut c_long,
@@ -447,38 +482,46 @@ pub(crate) fn fits_read_subset(
     }
 }
 
-pub(crate) fn fits_write_img(
+/// Write all of `array`, starting at the 1-based `firstelem`
+pub(crate) fn fits_write_img<T: HasFitsDataType>(
     f: &mut Handle,
-    datatype: c_int,
     firstelem: i64,
-    nelem: i64,
-    array: &[u8],
+    array: &[T],
     status: &mut c_int,
 ) {
     unsafe {
         sys::ffppr(
             f.as_raw(),
-            datatype,
+            T::FITS_DATA_TYPE.into(),
             firstelem,
-            nelem,
+            array.len() as i64,
             array.as_ptr() as *mut c_void,
             status,
         );
     }
 }
 
-pub(crate) fn fits_write_subset(
+/// Write the region running from the 1-based `fpixel` to `lpixel` inclusive
+///
+/// # Panics
+///
+/// If `array` is smaller than the region.
+pub(crate) fn fits_write_subset<T: HasFitsDataType>(
     f: &mut Handle,
-    datatype: c_int,
     fpixel: &[c_long],
     lpixel: &[c_long],
-    array: &[u8],
+    array: &[T],
     status: &mut c_int,
 ) {
+    let len = match checked_subset_len(f, fpixel, lpixel, None, status) {
+        Some(len) => len,
+        None => return,
+    };
+    assert!(array.len() >= len, "array smaller than the image region");
     unsafe {
         sys::ffpss(
             f.as_raw(),
-            datatype,
+            T::FITS_DATA_TYPE.into(),
             fpixel.as_ptr() as *mut c_long,
             lpixel.as_ptr() as *mut c_long,
             array.as_ptr() as *mut c_void,
@@ -487,25 +530,23 @@ pub(crate) fn fits_write_subset(
     }
 }
 
-/// Read `nelem` values of type `datatype` from a column, without checking for nulls
-pub(crate) fn fits_read_col(
+/// Read `array.len()` values from a column, without checking for nulls
+pub(crate) fn fits_read_col<T: HasFitsDataType>(
     f: &mut Handle,
-    datatype: c_int,
     colnum: c_int,
     firstrow: i64,
     firstelem: i64,
-    nelem: i64,
-    array: &mut [u8],
+    array: &mut [T],
     status: &mut c_int,
 ) {
     unsafe {
         sys::ffgcv(
             f.as_raw(),
-            datatype,
+            T::FITS_DATA_TYPE.into(),
             colnum,
             firstrow,
             firstelem,
-            nelem,
+            array.len() as i64,
             ptr::null_mut(),
             array.as_mut_ptr() as *mut c_void,
             ptr::null_mut(),
@@ -538,50 +579,78 @@ pub(crate) fn fits_read_col_log(
     }
 }
 
-/// Read one string per element of `array`; each buffer must have room for the column's
-/// display width plus a terminating nul
+/// Read `nelem` values of a column as strings, starting at the 1-based `firstrow`
+///
+/// Each returned buffer is nul-terminated.
 pub(crate) fn fits_read_col_str(
     f: &mut Handle,
     colnum: c_int,
     firstrow: i64,
-    firstelem: i64,
-    array: &mut [Vec<c_char>],
+    nelem: usize,
     status: &mut c_int,
-) {
+) -> Vec<Vec<c_char>> {
+    let mut display_width = 0;
+    let (mut typecode, mut repeat, mut width) = (0, 0, 0);
+    fits_get_col_display_width(f, colnum, &mut display_width, status);
+    unsafe {
+        sys::ffgtclll(
+            f.as_raw(),
+            colnum,
+            &mut typecode,
+            &mut repeat,
+            &mut width,
+            status,
+        );
+    }
+    if *status != 0 {
+        return Vec::new();
+    }
+    let len = match col_str_len(display_width, typecode, repeat, width) {
+        Ok(len) => len,
+        Err(e) => {
+            *status = e;
+            return Vec::new();
+        }
+    };
+
+    let mut array = vec![vec![0; len]; nelem];
     let mut ptrs: Vec<*mut c_char> = array.iter_mut().map(|s| s.as_mut_ptr()).collect();
+    // An empty null value turns off null checking; a null pointer would be dereferenced for
+    // logical and numeric columns
+    let mut nulval: [c_char; 1] = [0];
     unsafe {
         sys::ffgcvs(
             f.as_raw(),
             colnum,
             firstrow,
-            firstelem,
-            ptrs.len() as i64,
-            ptr::null_mut(),
+            1,
+            nelem as i64,
+            nulval.as_mut_ptr(),
             ptrs.as_mut_ptr(),
             ptr::null_mut(),
             status,
         );
     }
+    array
 }
 
-pub(crate) fn fits_write_col(
+/// Write all of `array` to a column, starting at the 1-based `firstrow`
+pub(crate) fn fits_write_col<T: HasFitsDataType>(
     f: &mut Handle,
-    datatype: c_int,
     colnum: c_int,
     firstrow: i64,
     firstelem: i64,
-    nelem: i64,
-    array: &[u8],
+    array: &[T],
     status: &mut c_int,
 ) {
     unsafe {
         sys::ffpcl(
             f.as_raw(),
-            datatype,
+            T::FITS_DATA_TYPE.into(),
             colnum,
             firstrow,
             firstelem,
-            nelem,
+            array.len() as i64,
             array.as_ptr() as *mut c_void,
             status,
         );

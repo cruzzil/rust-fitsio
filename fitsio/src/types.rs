@@ -35,7 +35,7 @@ pub enum DataType {
 /// as used by CFITSIO, refer to **C** types, not **Rust** types.
 /// Some compile-time calculations are used to ensure the right C type
 /// is associated with the Rust type.
-pub(crate) trait HasFitsDataType {
+pub(crate) trait HasFitsDataType: bytemuck::Pod {
     /// The [`DataType`] associated with `Self`.
     const FITS_DATA_TYPE: DataType;
 }

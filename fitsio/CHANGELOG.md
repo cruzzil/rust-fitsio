@@ -25,7 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Buffers for reading string columns have room for the terminating nul that cfitsio writes.
+- Buffers for reading string columns are sized from the column itself, with room for the
+  terminating nul. Previously a `TDISPn` narrower than the column made cfitsio write past them.
+- Reading a logical column as strings no longer passes cfitsio a null pointer, which crashed.
+- `write_col_range` returns an error when given fewer values than rows, and `read_region` and
+  `write_region` return an error for a region without one non-empty range per image axis or,
+  when writing, with less data than the region. Previously cfitsio read past the end of the data
+  or of the region.
 - A string column write no longer leaks the already-converted strings when a later one contains
   a nul byte.
 

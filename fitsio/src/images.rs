@@ -1,12 +1,8 @@
 //! Image related code
-use crate::backend;
+use crate::backend::{self, c_long};
 use crate::errors::{check_status, Result};
 use crate::fitsfile::FitsFile;
 use crate::hdu::{FitsHdu, HduInfo};
-#[cfg(test)]
-use crate::types::DataType;
-use crate::types::HasFitsDataType;
-use bytemuck::{cast_slice, cast_slice_mut};
 use std::ops::Range;
 
 /// Reading fits images
@@ -90,6 +86,39 @@ pub trait WriteImage: Sized {
     }
 }
 
+/// The 1-based first and last pixels of an image region, one entry per axis, and the number of
+/// pixels in it. The first range is the fastest varying (`NAXIS1`) axis.
+fn region_pixels(
+    shape: &[usize],
+    ranges: &[&Range<usize>],
+) -> Result<(Vec<c_long>, Vec<c_long>, usize)> {
+    if ranges.len() != shape.len() {
+        return Err(format!(
+            "{} ranges given for an image with {} axes",
+            ranges.len(),
+            shape.len()
+        )
+        .as_str()
+        .into());
+    }
+
+    let mut fpixel = Vec::with_capacity(ranges.len());
+    let mut lpixel = Vec::with_capacity(ranges.len());
+    let mut nelements: usize = 1;
+    for range in ranges {
+        if range.end <= range.start {
+            return Err(format!("empty range {:?} in image region", range)
+                .as_str()
+                .into());
+        }
+        // 1-based, and inclusive of the last pixel
+        fpixel.push((range.start + 1) as c_long);
+        lpixel.push(range.end as c_long);
+        nelements *= range.end - range.start;
+    }
+    Ok((fpixel, lpixel, nelements))
+}
+
 macro_rules! read_image_impl_vec {
     ($t:ty, $default_value:expr) => {
         impl ReadImage for Vec<$t> {
@@ -106,10 +135,8 @@ macro_rules! read_image_impl_vec {
 
                         backend::fits_read_img(
                             &mut fits_file.fptr,
-                            <$t as HasFitsDataType>::FITS_DATA_TYPE.into(),
                             (range.start + 1) as i64,
-                            nelements as i64,
-                            cast_slice_mut(&mut out),
+                            &mut out,
                             &mut status,
                         );
 
@@ -157,36 +184,18 @@ macro_rules! read_image_impl_vec {
                 ranges: &[&Range<usize>],
             ) -> Result<Self> {
                 match hdu.info {
-                    HduInfo::ImageInfo { .. } => {
-                        let n_ranges = ranges.len();
-
-                        let mut fpixel = Vec::with_capacity(n_ranges);
-                        let mut lpixel = Vec::with_capacity(n_ranges);
-
-                        let mut nelements = 1;
-                        for range in ranges {
-                            let start = range.start + 1;
-                            // No +1 as the range is exclusive
-                            let end = range.end;
-                            fpixel.push(start as _);
-                            lpixel.push(end as _);
-
-                            nelements *= (end + 1) - start;
-                        }
-
-                        let inc: Vec<_> = (0..n_ranges).map(|_| 1).collect();
-                        let vec_size = nelements;
-                        let mut out = vec![$default_value; vec_size];
+                    HduInfo::ImageInfo { ref shape, .. } => {
+                        let (fpixel, lpixel, nelements) = region_pixels(shape, ranges)?;
+                        let inc = vec![1; fpixel.len()];
+                        let mut out = vec![$default_value; nelements];
                         let mut status = 0;
-                        let datatype = <$t as HasFitsDataType>::FITS_DATA_TYPE;
 
                         backend::fits_read_subset(
                             &mut fits_file.fptr,
-                            datatype.into(),
                             &fpixel,
                             &lpixel,
                             &inc,
-                            cast_slice_mut(&mut out),
+                            &mut out,
                             &mut status,
                         );
 
@@ -218,10 +227,8 @@ macro_rules! write_image_impl {
                         let mut status = 0;
                         backend::fits_write_img(
                             &mut fits_file.fptr,
-                            <$t as HasFitsDataType>::FITS_DATA_TYPE.into(),
                             (range.start + 1) as i64,
-                            nelements as i64,
-                            cast_slice(data),
+                            &data[..nelements],
                             &mut status,
                         );
 
@@ -241,28 +248,24 @@ macro_rules! write_image_impl {
                 data: &[Self],
             ) -> Result<()> {
                 match hdu.info {
-                    HduInfo::ImageInfo { .. } => {
-                        let n_ranges = ranges.len();
-
-                        let mut fpixel = Vec::with_capacity(n_ranges);
-                        let mut lpixel = Vec::with_capacity(n_ranges);
-
-                        for range in ranges {
-                            let start = range.start + 1;
-                            // No +1 as the range is exclusive
-                            let end = range.end;
-                            fpixel.push(start as _);
-                            lpixel.push(end as _);
+                    HduInfo::ImageInfo { ref shape, .. } => {
+                        let (fpixel, lpixel, nelements) = region_pixels(shape, ranges)?;
+                        if data.len() < nelements {
+                            return Err(format!(
+                                "not enough data ({} elements) to write a region of {} pixels",
+                                data.len(),
+                                nelements
+                            )
+                            .as_str()
+                            .into());
                         }
-
                         let mut status = 0;
 
                         backend::fits_write_subset(
                             &mut fits_file.fptr,
-                            <$t as HasFitsDataType>::FITS_DATA_TYPE.into(),
                             &fpixel,
                             &lpixel,
-                            cast_slice(data),
+                            data,
                             &mut status,
                         );
 
@@ -606,9 +609,8 @@ mod tests {
     // helper macro to write a file with an image and table of a specific
     // type, using the low level `fitsio-sys`.
     macro_rules! example_file {
-        ($type:ty, $image_type:expr, $data_type:expr, $cb:expr) => {
+        ($type:ty, $image_type:expr, $cb:expr) => {
             use crate::backend::{self, Handle};
-            use bytemuck::cast_slice;
 
             with_temp_file(|filename| {
                 let dimensions = vec![5usize, 5];
@@ -630,14 +632,7 @@ mod tests {
                     backend::fits_create_img(&mut fptr, $image_type, &long_dimensions, &mut status);
                     let _ = crate::errors::check_status(status).unwrap();
 
-                    backend::fits_write_img(
-                        &mut fptr,
-                        $data_type,
-                        1,
-                        image_data.len() as _,
-                        cast_slice(&image_data),
-                        &mut status,
-                    );
+                    backend::fits_write_img(&mut fptr, 1, &image_data, &mut status);
                     let _ = crate::errors::check_status(status).unwrap();
 
                     // write the table
@@ -658,16 +653,7 @@ mod tests {
                         &mut status,
                     );
 
-                    backend::fits_write_col(
-                        &mut fptr,
-                        $data_type,
-                        1,
-                        1,
-                        1,
-                        10,
-                        cast_slice(&column),
-                        &mut status,
-                    );
+                    backend::fits_write_col(&mut fptr, 1, 1, 1, &column, &mut status);
                     let _ = crate::errors::check_status(status).unwrap();
                     // the file is closed when `fptr` is dropped
                 }
@@ -681,7 +667,6 @@ mod tests {
         example_file!(
             i16,
             crate::images::ImageType::Short.into(),
-            crate::images::DataType::TSHORT.into(),
             |filename, image_data, column| {
                 // now read the file and check the output
                 let mut f = FitsFile::open(filename).unwrap();
@@ -701,7 +686,6 @@ mod tests {
         example_file!(
             u16,
             crate::images::ImageType::UnsignedShort.into(),
-            crate::images::DataType::TUSHORT.into(),
             |filename, image_data, column| {
                 // now read the file and check the output
                 let mut f = FitsFile::open(filename).unwrap();
