@@ -1097,10 +1097,6 @@ pub use crate::version::{cfitsio_version, CfitsioVersion};
 #[cfg(feature = "cfitsio")]
 pub use sys::{cfitsio_version, CfitsioVersion};
 
-/// `rsfitsio`, the pure Rust CFITSIO port used by the `rsfitsio` backend
-#[cfg(all(feature = "rsfitsio", not(feature = "cfitsio")))]
-pub use rsfitsio;
-
 #[macro_use]
 mod macros;
 mod backend;

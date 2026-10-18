@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of cfitsio instead of the C library. `fitsio` calls its safe API directly, so this backend
   needs no `unsafe` code. It is mutually exclusive with the new default `cfitsio` feature.
 - Windows msvc support with the `rsfitsio` feature, tested in CI.
+- `FitsFile::as_rsfitsio` and `FitsFile::from_rsfitsio` (with `rsfitsio`), safe counterparts of
+  `as_raw` and `from_raw`. `rsfitsio` itself is not re-exported.
 
 ### Changed
 

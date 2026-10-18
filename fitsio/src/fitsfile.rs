@@ -750,6 +750,9 @@ impl FitsFile {
     /// Borrow the underlying `rsfitsio` file, to call `rsfitsio` routines this crate does not
     /// wrap.
     ///
+    /// `fitsio` does not re-export `rsfitsio`: add it to your own dependencies, at a version
+    /// compatible with the one `fitsio` uses, to call its routines.
+    ///
     /// Any changes to the underlying fits file will not be updated in existing [`FitsHdu`]
     /// objects, so these must be recreated.
     ///
@@ -779,6 +782,9 @@ impl FitsFile {
 
     /// Create a `FitsFile` from a file opened through `rsfitsio`, for example one opened from
     /// memory.
+    ///
+    /// `fitsio` does not re-export `rsfitsio`: add it to your own dependencies, at a version
+    /// compatible with the one `fitsio` uses, to call its routines.
     ///
     /// # Example
     ///
