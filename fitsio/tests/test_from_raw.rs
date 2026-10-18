@@ -35,3 +35,31 @@ fn from_raw() {
     assert_eq!(second_row[0], 177);
     assert_eq!(second_row[49], 168);
 }
+
+/// When `from_raw` fails, the caller still owns the pointer, so it must not have been closed
+#[cfg(unix)]
+#[test]
+fn from_raw_error_leaves_pointer_open() {
+    use fitsio::sys::{ffclos, ffcrim, ffinit};
+    use std::os::unix::ffi::OsStrExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    // a file name that is not UTF-8, which `from_raw` cannot represent
+    let path = dir.path().join(std::ffi::OsStr::from_bytes(b"\xff.fits"));
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+
+    let mut fptr = ptr::null_mut();
+    let mut status = 0;
+    unsafe {
+        ffinit(&mut fptr, c_path.as_ptr(), &mut status);
+        ffcrim(fptr, 8, 0, ptr::null_mut(), &mut status);
+    }
+    assert_eq!(status, 0);
+
+    assert!(unsafe { FitsFile::from_raw(fptr, FileOpenMode::READWRITE) }.is_err());
+
+    unsafe {
+        ffclos(fptr, &mut status);
+    }
+    assert_eq!(status, 0);
+}

@@ -52,6 +52,13 @@ impl Handle {
     pub(crate) fn as_raw(&mut self) -> *mut sys::fitsfile {
         self.0.as_ptr()
     }
+
+    /// Give up ownership of the `fitsfile` without closing it
+    pub(crate) fn into_raw(self) -> *mut sys::fitsfile {
+        let fptr = self.0.as_ptr();
+        std::mem::forget(self);
+        fptr
+    }
 }
 
 impl Drop for Handle {

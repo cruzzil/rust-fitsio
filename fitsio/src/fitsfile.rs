@@ -714,6 +714,9 @@ impl FitsFile {
     ///
     /// Given these two things, a [`FitsFile`] can be created.
     ///
+    /// On success the [`FitsFile`] owns the pointer and closes it when dropped. On error the
+    /// pointer is left open and the caller still owns it.
+    ///
     /// # Example
     ///
     /// ```rust
@@ -744,7 +747,19 @@ impl FitsFile {
         mode: FileOpenMode,
     ) -> Result<FitsFile> {
         let fptr = std::ptr::NonNull::new(fptr).ok_or(Error::NullPointer)?;
-        Self::from_handle(Handle::from_raw(fptr), mode)
+        let mut fptr = Handle::from_raw(fptr);
+        match file_path(&mut fptr) {
+            Ok(file_path) => Ok(Self {
+                file_path,
+                open_mode: mode,
+                fptr,
+            }),
+            Err(e) => {
+                // the caller still owns the file, so it must not be closed
+                fptr.into_raw();
+                Err(e)
+            }
+        }
     }
 
     /// Borrow the underlying `rsfitsio` file, to call `rsfitsio` routines this crate does not
@@ -810,22 +825,22 @@ impl FitsFile {
         fptr: Box<rsfitsio::fitsio::fitsfile>,
         mode: FileOpenMode,
     ) -> Result<FitsFile> {
-        Self::from_handle(Handle::from_rsfitsio(fptr), mode)
-    }
-
-    fn from_handle(mut fptr: Handle, mode: FileOpenMode) -> Result<FitsFile> {
-        let mut buf = [0; FLEN_FILENAME];
-        let mut status = 0;
-        backend::fits_file_name(&mut fptr, &mut buf, &mut status);
-        check_status(status)?;
-        let s = stringutils::buf_to_string(&buf)?;
-
+        let mut fptr = Handle::from_rsfitsio(fptr);
         Ok(Self {
-            file_path: PathBuf::from(s),
+            file_path: file_path(&mut fptr)?,
             open_mode: mode,
             fptr,
         })
     }
+}
+
+/// The path of an open file
+fn file_path(fptr: &mut Handle) -> Result<PathBuf> {
+    let mut buf = [0; FLEN_FILENAME];
+    let mut status = 0;
+    backend::fits_file_name(fptr, &mut buf, &mut status);
+    check_status(status)?;
+    Ok(PathBuf::from(stringutils::buf_to_string(&buf)?))
 }
 
 /**
