@@ -904,8 +904,12 @@ fitsio = { version = "*", default-features = false, features = ["rsfitsio-experi
 ```
 
 The two backends are mutually exclusive. With `rsfitsio`, `fitsio` calls the safe Rust API of
-`rsfitsio` directly rather than its C ABI, so no `unsafe` code is involved in reading or writing
-files. The `fitsio-src`, `src-cmake` and `bindgen` features only apply to the C backend.
+`rsfitsio` directly rather than its C ABI, so `fitsio` itself contains no `unsafe` code
+(`rsfitsio` still uses some internally). The `fitsio-src`, `src-cmake` and `bindgen` features
+only apply to the C backend.
+
+With either backend, do not use a file from several threads at once, including through separate
+`FitsFile`s that opened the same path: both libraries share one underlying file between them.
 
 # Raw fits file access
 

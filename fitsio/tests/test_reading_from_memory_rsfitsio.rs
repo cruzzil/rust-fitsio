@@ -22,6 +22,8 @@ unsafe extern "C" fn fixed_realloc(p: *mut c_void, newsize: usize) -> *mut c_voi
 
 #[test]
 fn reading_from_memory() {
+    // rsfitsio keeps pointers to `bytes`, `ptr` and `size`, so they must outlive the file, which
+    // is declared after them and so dropped first
     let mut bytes = std::fs::read("../testdata/full_example.fits").unwrap();
     let mut size = bytes.len();
     BUFFER_LEN.store(size, Ordering::SeqCst);

@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Experimental `rsfitsio-experimental` feature, to use the pure Rust
   [`rsfitsio`](https://crates.io/crates/rsfitsio) port of cfitsio instead of the C library.
-  `fitsio` calls its safe API directly, so this backend needs no `unsafe` code. It is mutually
-  exclusive with the new default `cfitsio` feature.
+  `fitsio` calls its safe API directly, so with this backend `fitsio` itself contains no
+  `unsafe` code. It is mutually exclusive with the new default `cfitsio` feature.
 - Windows msvc support with the `rsfitsio-experimental` feature, tested in CI.
 - `FitsFile::as_rsfitsio` and `FitsFile::from_rsfitsio` (with `rsfitsio-experimental`), safe counterparts of
   `as_raw` and `from_raw`. `rsfitsio` itself is not re-exported.
@@ -30,7 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Buffers for reading string columns are sized from the column itself, with room for the
   terminating nul. Previously a `TDISPn` narrower than the column made cfitsio write past them.
-- Reading a logical column as strings no longer passes cfitsio a null pointer, which crashed.
+- Reading a logical column, or a numeric column containing nulls, as strings no longer passes
+  cfitsio null pointers, which crashed.
+- Reading a column as strings returns an error for a `TDISPn` display format that cfitsio cannot
+  hold (longer than 19 characters, or wider than 399), instead of overflowing its buffers.
 - `write_col_range` returns an error when given fewer values than rows, and `read_region` and
   `write_region` return an error for a region without one non-empty range per image axis or,
   when writing, with less data than the region. Previously cfitsio read past the end of the data

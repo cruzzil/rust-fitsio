@@ -798,6 +798,8 @@ impl FitsFile {
     /// Create a `FitsFile` from a file opened through `rsfitsio`, for example one opened from
     /// memory.
     ///
+    /// The `FitsFile` takes ownership of the file, and closes it if this returns an error.
+    ///
     /// `fitsio` does not re-export `rsfitsio`: add it to your own dependencies, at a version
     /// compatible with the one `fitsio` uses, to call its routines.
     ///
