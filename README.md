@@ -32,6 +32,9 @@ library.
 
 The minimal version of rust we support is 1.63.0.
 
+The `rsfitsio` feature needs a newer compiler: rust 1.96.0, the minimum supported by
+[`rsfitsio`](https://crates.io/crates/rsfitsio).
+
 ## Installation
 
 `fitsio` supports versions of `cfitsio >= 3.37`.
