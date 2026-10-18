@@ -1087,6 +1087,8 @@ let _hdu = t.hdu(hdu_num).unwrap();
 #![cfg_attr(feature = "clippy", feature(plugin))]
 #![cfg_attr(feature = "clippy", plugin(clippy))]
 #![allow(clippy::uninlined_format_args)]
+// Only the C backend needs `unsafe`
+#![cfg_attr(not(feature = "cfitsio"), forbid(unsafe_code))]
 
 #[cfg(feature = "cfitsio")]
 pub use fitsio_sys as sys;
